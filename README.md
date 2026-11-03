@@ -167,6 +167,13 @@ Twenty-two tools, in five groups:
 `sql_query` is the one that makes open-ended analysis work — you don't have to anticipate every
 question in a tool schema.
 
+**How it fits with the report.** The report and the MCP server read the same ledger file. The
+report comes to you on a schedule, and needs no AI at all. The MCP server is for questions, such as
+"what did the move cost us?", "which subscriptions went up this year?" or "can we afford a $600 car
+payment?". Corrections work in both directions too. When Claude recategorizes a transaction or tags
+an episode, it writes to the ledger, so tomorrow's report already reflects the fix. Nothing is
+copied between them, and neither needs the other running.
+
 Every read returns a `freshness` note saying whether it synced or served from the ledger, so the
 model can tell you which it was rather than implying data is live when it is not.
 
@@ -625,6 +632,8 @@ What is in it:
 | **Where you stand** | balances, with cash, investments and debt kept apart — brokerage holdings are not spendable money |
 | **Not counted as spending** | transfers and card payments, and why |
 
+![Where it went: category bars, with the table expanded to the transactions behind each one](docs/images/report-drilldown.png)
+
 ### The AI section
 
 Optional and off by default. It runs a **command**, not an API — so no key lives here:
@@ -651,6 +660,72 @@ than inventing a suggestion.
 The analysis reads **at least 90 days** regardless of the range on display: recurring detection needs
 a charge to appear more than once, and over 30 days a monthly subscription appears exactly once and
 is invisible.
+
+## Getting the report to you
+
+**Every report is saved on your computer first**, in `reports/` under the data directory. On macOS
+that is `~/Library/Application Support/finance-mcp/reports/report-<start>_<end>.html`. Reports are
+kept until you delete them, and a failed delivery never costs you one. `finance report --open`
+opens the newest one in a browser.
+
+`deliver` in `[report]` picks how you hear about it. List as many channels as you like:
+
+```toml
+[report]
+deliver = ["notify", "smtp"]
+```
+
+| Channel | What it does | Needs |
+|---|---|---|
+| `notify` | A macOS notification with spending, income and net in it | Nothing |
+| `smtp` | **Emails it to you.** Best way to read it on a phone | An app password |
+| `email` | Emails it through Mail.app | macOS, Mail.app set up |
+| `copy` | Copies the file into another folder, such as Dropbox | A folder |
+| `command` | Hands the file to any program — ntfy, Telegram, a script | The program |
+| `open` | Opens it in your browser | Being at the computer |
+| `save-only` | Only saves it | Nothing |
+
+<img src="docs/images/report-phone.png" alt="The report on a phone: spending, income and net tiles, then the monthly chart" width="300" align="right">
+
+### Email
+
+The email has the three figures in the body, with any warnings above them, so the subject line and
+preview are often all you need to read. The full report is attached as one HTML file, which a phone
+opens with a tap — no app, nothing loaded from the network. It is laid out for a phone screen.
+
+**There are two ways to send it.**
+
+**1. `smtp` — recommended.** It sends the message itself through your mail provider, so it works
+the same from a scheduled job as from a terminal. For Gmail:
+
+1. Turn on 2-Step Verification, then create an **app password** at
+   <https://myaccount.google.com/apppasswords>. Gmail rejects your normal password here.
+2. Store it in the OS keystore, not the config file:
+   ```bash
+   finance secret set smtp password
+   ```
+3. Add the account to `config.toml` and add `"smtp"` to `deliver`:
+   ```toml
+   [report.smtp]
+   host = "smtp.gmail.com"
+   port = 587                 # 587 = STARTTLS, 465 = implicit TLS
+   user = "you@gmail.com"     # the account that sends it
+   to = "you@gmail.com"       # where it goes; can be a different address
+   ```
+4. Run `finance run` once by hand to check it arrives.
+
+You may prefer to send from a separate Gmail account kept for the job, so the app password cannot
+reach your main inbox.
+
+**2. `email` — Mail.app, macOS only.** No password is stored anywhere, because it uses the Mail
+account you already have. Set `emailTo = "you@example.com"` under `[report]`. Set
+`sendEmail = false` to get a draft to review instead of a sent message. It has two drawbacks for a
+daily job. Driving Mail **opens Mail.app** on your desktop every morning. And the first run needs
+you to allow the terminal under System Settings → Privacy & Security → Automation. Mail also
+sometimes fails to answer in time (error -1712). Use it if you want the reports in your Mail
+sent items, and `smtp` otherwise.
+
+<br clear="right">
 
 ## Scheduling
 

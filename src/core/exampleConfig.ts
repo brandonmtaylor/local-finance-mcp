@@ -55,13 +55,16 @@ schedule = "off"                  # off | daily | weekly | monthly
 # negative the next. If your pay is not the same every month, prefer
 # last-90-days: the report still shows the shorter windows as tabs.
 range = "last-30-days"            # last-7-days | last-30-days | last-90-days | month-to-date
-deliver = ["notify", "copy"]      # notify | smtp | copy | command | open | email | save-only
+deliver = ["notify"]              # notify | smtp | copy | command | open | email | save-only
 ai = false                        # include the AI analysis (needs [narration])
 
-# \`copy\` drops the report in a synced folder — the most reliable way to read it
-# on a phone, with no permissions and no credentials. Defaults to iCloud Drive
-# on macOS; point it anywhere that syncs.
-# copyTo = "~/Library/Mobile Documents/com~apple~CloudDocs/Finance"
+# Every report is saved to reports/ under the data directory first; these
+# channels only decide how you hear about it.
+
+# \`copy\` drops the report in another folder, such as Dropbox. Its default is
+# iCloud Drive on macOS, but iCloud blocks writes from a scheduled job, so there
+# it only works when you run \`finance run\` by hand. For a phone, prefer smtp.
+# copyTo = "~/Dropbox/Finance"
 
 # \`command\` hands the report to anything — the same contract as [narration],
 # so no push service needs code in this project. Placeholders: {file}
@@ -87,7 +90,7 @@ ai = false                        # include the AI analysis (needs [narration])
 
 # \`email\` goes through Mail.app, so no SMTP password is stored. Be warned that
 # Mail's AppleScript interface is unreliable on some machines (AppleEvent
-# -1712); \`copy\` is the dependable option for a scheduled job.
+# -1712); \`smtp\` is the dependable option for a scheduled job.
 # emailTo = "you@example.com"
 #
 # Channels: "notify" (a macOS notification), "smtp" (sends it yourself),
