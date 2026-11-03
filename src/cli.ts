@@ -516,6 +516,13 @@ program
       console.log(`    credit-card payments ${money(s.excluded.paymentsCents, s.currency)}`);
       console.log(`    transfers          ${money(s.excluded.transfersCents, s.currency)}`);
     }
+    if (s.excluded.refundsBeyondSpendingCents) {
+      // Said, not dropped: money that arrived in a spending category beyond what
+      // that category spent — a payout or reimbursement, not a refund.
+      console.log(`\n  Set aside: ${money(s.excluded.refundsBeyondSpendingCents, s.currency)} arrived in spending categories`);
+      console.log('    beyond what they spent here — likely payouts or reimbursements, so counted as');
+      console.log('    neither spending nor income. `finance doctor` lists them.');
+    }
     db.close();
   });
 

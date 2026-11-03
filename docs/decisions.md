@@ -211,3 +211,30 @@ legitimate-looking zero must be able to say why it is zero.**
 
 The boundary matters — an account with no rows in a window IS a genuine zero.
 Only a total absence of accounts is unknown.
+
+---
+
+## 11. Spending never goes below zero; refunds stop at their own category
+
+**Decided:** 2026-11-03
+
+Money arriving in a spending category reduces that category — a returned
+purchase comes off shopping. It reduces it **only to zero**. Anything beyond is
+reported as `refundsBeyondSpendingCents` and counted as neither spending nor
+income, and `finance doctor` lists the rows with the command to file them.
+
+**Why:** categorization reads the description, not the direction. An insurer
+paying out a claim matches the insurance pattern exactly as the premium does,
+so five claim payouts landed in `insurance` as money in — and a 90-day report
+printed spending as a negative five-figure number. Nobody can act on "you spent
+less than nothing", and the 30-day figure beside it was quietly understated by
+the same rows.
+
+The floor applies to every consumer at once — summary, insights, affordability,
+the report's bars and running line — through `floorByCategory`, so no two of
+them can disagree about what was spent. Tags are the exception: a tag is an
+episode, and an episode's net (repairs minus the payout) is exactly what it is
+for.
+
+**Would change if:** a provider supplied a reliable refund-versus-payout signal,
+which none does today.

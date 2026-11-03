@@ -354,7 +354,43 @@ export interface SpendingSummary {
    * the amount MOVED — the larger of what left and what arrived — so a payment
    * seen from both the checking and the card side counts once, not zero.
    */
-  excluded: { paymentsCents: number; transfersCents: number };
+  excluded: {
+    paymentsCents: number;
+    transfersCents: number;
+    /**
+     * Money that arrived in a spending category beyond what that category
+     * spent in the window — a payout or reimbursement, not a refund. Neither
+     * spending nor income; see floorByCategory.
+     */
+    refundsBeyondSpendingCents: number;
+  };
+}
+
+/**
+ * Spending from per-category net amounts, with no category below zero.
+ *
+ * Money arriving in a spending category is a refund and reduces that
+ * category — a returned jacket comes off shopping. But only down to zero.
+ * Past that it is not a refund of anything spent in the window: it is a
+ * payout, a reimbursement or income filed under a merchant's category. Five
+ * insurance claim payouts filed as `insurance` once took a 90-day spending
+ * total to −$11,937, and a negative "spent" is a number nobody can act on.
+ * The excess is returned separately so it can be shown rather than lost.
+ *
+ * `netCents` uses the ledger's sign: negative is money out.
+ */
+export function floorByCategory(
+  rows: ReadonlyArray<{ category: string; netCents: number }>,
+): { spendingCents: number; beyondCents: number } {
+  const net = new Map<string, number>();
+  for (const r of rows) net.set(r.category, (net.get(r.category) ?? 0) + (r.netCents || 0));
+  let spendingCents = 0;
+  let beyondCents = 0;
+  for (const n of net.values()) {
+    if (n < 0) spendingCents -= n;
+    else beyondCents += n;
+  }
+  return { spendingCents, beyondCents };
 }
 
 export function getSpendingSummary(
@@ -391,6 +427,9 @@ export function getSpendingSummary(
      GROUP BY ${EFFECTIVE_CATEGORY}, "group"
      ORDER BY amountCents DESC
   `).all(params) as SpendingSummary['byCategory'];
+  const floored = floorByCategory(byCategory.map((c) => ({ category: c.category, netCents: -c.amountCents })));
+  // A category that took in more than it spent is not a line of spending.
+  const spentCategories = byCategory.filter((c) => c.amountCents > 0);
 
   const topMerchants = db.prepare(`
     SELECT COALESCE(NULLIF(t.merchant_name, ''), t.description) AS merchant,
@@ -434,10 +473,10 @@ export function getSpendingSummary(
     endDate,
     coverageGaps: coverageGaps(db, startDate, endDate),
     currency,
-    spendingCents: positive(scope.groups.reduce((sum, g) => sum + totalFor(g), 0)),
+    spendingCents: floored.spendingCents,
     transactionCount: scope.groups.reduce((sum, g) => sum + countFor(g), 0),
     cardPaymentsCounted: scope.cardPaymentsCounted,
-    byCategory,
+    byCategory: spentCategories,
     topMerchants,
     incomeCents: totalFor('income'),
     excluded: {
@@ -445,6 +484,7 @@ export function getSpendingSummary(
       // places would invite double-counting by anyone adding the two.
       paymentsCents: scope.cardPaymentsCounted ? 0 : movedFor('payments'),
       transfersCents: movedFor('transfers'),
+      refundsBeyondSpendingCents: floored.beyondCents,
     },
   };
 }

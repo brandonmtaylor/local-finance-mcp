@@ -14,6 +14,7 @@ import { markdownToHtml, type NarrationResult } from './narrate.js';
 import {
   getSpendingSummary,
   resolveSpendingScope,
+  floorByCategory,
   latestBalances,
   tagTotals,
   incomeSources,
@@ -91,16 +92,25 @@ export function monthlySeries(
   const groups = spendingGroupsSql(db, startDate, endDate);
   const rows = db.prepare(`
     SELECT substr(date, 1, 7) AS month,
-           -SUM(CASE WHEN spend_group IN (${groups}) THEN amount_cents ELSE 0 END) AS spendingCents,
            SUM(CASE WHEN spend_group = 'income' THEN amount_cents ELSE 0 END) AS incomeCents
       FROM visible_transactions
      WHERE date >= @startDate AND date <= @endDate
      GROUP BY month ORDER BY month
-  `).all({ startDate, endDate }) as MonthlyPoint[];
+  `).all({ startDate, endDate }) as Array<{ month: string; incomeCents: number }>;
+  // Each month floored per category, as the headline is — no bar below zero.
+  // A refund landing the month after its purchase therefore leaves the bars
+  // summing a little above a headline that nets the two; a bar that dips
+  // below the axis would be the worse picture.
+  const spend = db.prepare(`
+    SELECT substr(date, 1, 7) AS month, category, SUM(amount_cents) AS netCents
+      FROM visible_transactions
+     WHERE date >= @startDate AND date <= @endDate AND spend_group IN (${groups})
+     GROUP BY month, category
+  `).all({ startDate, endDate }) as Array<{ month: string; category: string; netCents: number }>;
   // Normalize -0, which Intl renders as "-$0.00".
   return rows.map((r) => ({
     month: r.month,
-    spendingCents: r.spendingCents || 0,
+    spendingCents: floorByCategory(spend.filter((c) => c.month === r.month)).spendingCents || 0,
     incomeCents: r.incomeCents || 0,
   }));
 }
@@ -164,20 +174,34 @@ export function cumulativeSeries(
   // with the total printed above them whenever card payments are folded in.
   const groups = spendingGroupsSql(db, startDate, endDate);
   const rows = db.prepare(`
-    SELECT date,
-           -SUM(CASE WHEN spend_group IN (${groups}) THEN amount_cents ELSE 0 END) AS spendingCents,
-           SUM(CASE WHEN spend_group = 'income' THEN amount_cents ELSE 0 END) AS incomeCents
+    SELECT date, category,
+           CASE WHEN spend_group IN (${groups}) THEN 1 ELSE 0 END AS spending,
+           SUM(CASE WHEN spend_group = 'income' THEN amount_cents ELSE 0 END) AS incomeCents,
+           SUM(amount_cents) AS netCents
       FROM visible_transactions
      WHERE date >= @startDate AND date <= @endDate
-     GROUP BY date ORDER BY date
-  `).all({ startDate, endDate }) as CumulativePoint[];
+       AND (spend_group IN (${groups}) OR spend_group = 'income')
+     GROUP BY date, category, spending ORDER BY date
+  `).all({ startDate, endDate }) as Array<{
+    date: string; category: string; spending: number; incomeCents: number; netCents: number;
+  }>;
 
-  let spend = 0, income = 0;
-  return rows.map((r) => {
-    spend += r.spendingCents || 0;
+  // Running totals per category, each floored at zero, so the line finishes
+  // exactly on the headline and never runs below the axis on a payout.
+  const running = new Map<string, number>();
+  const points: CumulativePoint[] = [];
+  let income = 0;
+  for (const r of rows) {
     income += r.incomeCents || 0;
-    return { date: r.date, spendingCents: spend, incomeCents: income };
-  });
+    if (r.spending) running.set(r.category, (running.get(r.category) ?? 0) + r.netCents);
+    const spendingCents = floorByCategory(
+      [...running].map(([category, netCents]) => ({ category, netCents })),
+    ).spendingCents;
+    const point = { date: r.date, spendingCents, incomeCents: income };
+    if (points.length && points[points.length - 1]!.date === r.date) points[points.length - 1] = point;
+    else points.push(point);
+  }
+  return points;
 }
 
 export function collectReportData(
@@ -928,7 +952,14 @@ function renderPanel(data: ReportData, partial = false): string {
     <div class="excluded">
       <div>Credit-card payments<b>${money(summary.excluded.paymentsCents)}</b></div>
       <div>Transfers<b>${money(summary.excluded.transfersCents)}</b></div>
+      ${summary.excluded.refundsBeyondSpendingCents ? `<div>Payouts beyond spending<b>${money(summary.excluded.refundsBeyondSpendingCents)}</b></div>` : ''}
     </div>
+    ${summary.excluded.refundsBeyondSpendingCents ? `<p class="note">
+      Money that arrived in a spending category beyond everything that category spent in this
+      window &mdash; an insurance payout or reimbursement rather than a refund. It is counted as
+      neither spending nor income, so spending never reads below zero. <code>finance doctor</code>
+      lists the rows.
+    </p>` : ''}
     ${(data.transferSources?.length ?? 0) > 0 ? `
     <h3 style="font-size:13px;font-weight:600;margin-top:18px">Where those transfers went</h3>
     <div class="table-wrap"><table style="margin-top:8px">

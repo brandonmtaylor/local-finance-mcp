@@ -184,7 +184,10 @@ server.registerTool(
       'student, auto) ARE counted as spending: a loan reports a balance rather than purchases, ' +
       'so nothing else accounts for them. When `cardPaymentsCounted` is true, card payments ARE ' +
       'included in the total because no credit-card account is linked — the payment is then the ' +
-      'only record of what was spent on that card. Say so when reporting the figure.',
+      'only record of what was spent on that card. Say so when reporting the figure. ' +
+      'Refunds reduce their category only down to zero; money beyond that (an insurance ' +
+      'payout filed as insurance, say) is in `excluded.refundsBeyondSpendingCents` and is ' +
+      'neither spending nor income.',
     inputSchema: {
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('YYYY-MM-DD, inclusive'),
       endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('YYYY-MM-DD, inclusive'),

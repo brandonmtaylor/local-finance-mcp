@@ -23,6 +23,10 @@ export interface Diagnostic {
   remedy?: string;
 }
 
+const dollars = (cents: number) => `$${(cents / 100).toLocaleString('en-US', {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+})}`;
+
 
 
 /**
@@ -255,9 +259,7 @@ export function detectUnlinkedCards(db: Database.Database): Diagnostic[] {
   `).get() as { n: number };
   const gap = payments.cents - cardSpend.cents;
 
-  const money = (cents: number) => `$${(cents / 100).toLocaleString('en-US', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  const money = dollars;
 
   return [{
     // A warning, not an error. Nothing is missing from the TOTAL — the
@@ -378,6 +380,52 @@ const SEVERITY_RANK: Record<Diagnostic['severity'], number> = {
  * A stable sort, so detectors keep their relative order within a severity and
  * the output does not shuffle between runs on the same data.
  */
+/**
+ * Money arriving in a spending category that no recent spending accounts for.
+ *
+ * A refund reduces the category it lands in, which is right for a returned
+ * purchase. An insurance claim payout, a reimbursement or a tax refund filed
+ * the same way is not a refund of anything — and once the payouts outweighed
+ * three months of spending, the report printed spending as a negative number.
+ * The totals now floor each category at zero, so this is about the label
+ * rather than the arithmetic: say which rows were set aside and how to file
+ * them, so the excess is not silently dropped.
+ *
+ * "No recent spending accounts for it" means the amount exceeds everything the
+ * same category spent in the 90 days before it. Rows a person already
+ * corrected are left alone.
+ */
+export function detectPayoutsInSpending(db: Database.Database, minCents = 50_000): Diagnostic[] {
+  const rows = db.prepare(`
+    SELECT t.date, t.amount_cents AS cents, t.category, t.description
+      FROM visible_transactions t
+     WHERE t.spend_group IN ('purchases','bills')
+       AND t.amount_cents >= @minCents
+       AND t.category_override IS NULL
+       AND t.amount_cents > COALESCE((
+         SELECT -SUM(p.amount_cents) FROM visible_transactions p
+          WHERE p.category = t.category AND p.amount_cents < 0
+            AND p.date < t.date AND p.date >= date(t.date, '-90 days')
+       ), 0)
+     ORDER BY t.date DESC
+  `).all({ minCents }) as Array<{ date: string; cents: number; category: string; description: string }>;
+  if (rows.length === 0) return [];
+
+  const total = rows.reduce((sum, r) => sum + r.cents, 0);
+  const sample = rows[0]!.description.replace(/\s+\d[\d\s]*.*$/, '').trim() || rows[0]!.description;
+  return [{
+    severity: 'warning',
+    code: 'payouts-in-spending',
+    message: `${rows.length} incoming amount(s), ${dollars(total)}, are filed as spending categories `
+      + 'with no spending there to refund',
+    detail: rows.slice(0, 8).map((r) => `${r.date}  ${dollars(r.cents)}  ${r.category}  ${r.description.slice(0, 40)}`),
+    remedy: 'Spending totals set these aside rather than going negative, but they are probably '
+      + 'payouts, reimbursements or income. File them as what they are, e.g. '
+      + `\`finance categorize --match "${sample}" --category transfer --dry-run\` `
+      + '(neither spending nor income) or `--category income`.',
+  }];
+}
+
 export function runDiagnostics(db: Database.Database, now = new Date()): Diagnostic[] {
   return [
     ...detectUnlinkedCards(db),
@@ -386,6 +434,7 @@ export function runDiagnostics(db: Database.Database, now = new Date()): Diagnos
     ...detectOrphans(db),
     ...detectSyncHealth(db, 3, now),
     ...detectEmptyAccounts(db),
+    ...detectPayoutsInSpending(db),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 }
 

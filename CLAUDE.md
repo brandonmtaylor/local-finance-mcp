@@ -91,6 +91,9 @@ wrappers.**
 - **Tags are orthogonal to categories.** One category per transaction; any
   number of tags. Tags exist for episodes that span categories and weeks.
 - **Never return a bare zero that could mean "no data".** See decision 10.
+- **Spending never goes below zero.** A refund reduces its own category to zero
+  and no further; the excess is reported, not counted. Compute spending through
+  `floorByCategory` so every consumer agrees. See decision 11.
 
 ## Working on it
 

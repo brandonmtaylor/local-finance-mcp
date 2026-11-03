@@ -12,7 +12,7 @@
 
 import type Database from 'better-sqlite3';
 
-import { resolveSpendingScope } from './queries.js';
+import { resolveSpendingScope, floorByCategory } from './queries.js';
 
 const EFFECTIVE = 't.category';
 
@@ -135,11 +135,14 @@ export function merchantKey(description: string, merchantName?: string | null): 
 // ── extraction ───────────────────────────────────────────────────────────────
 
 function spendingTotal(db: Database.Database, period: Period): number {
-  const row = db.prepare(
-    `SELECT -COALESCE(SUM(t.amount_cents),0) AS cents FROM visible_transactions t
-      WHERE t.date >= @start AND t.date <= @end AND ${spendingClause(db, period)}`,
-  ).get(period) as { cents: number };
-  return row.cents || 0;
+  // Per category, floored at zero — the same rule as the summary, so the
+  // insights headline and the summary cannot disagree. See floorByCategory.
+  const rows = db.prepare(
+    `SELECT ${EFFECTIVE} AS category, SUM(t.amount_cents) AS netCents FROM visible_transactions t
+      WHERE t.date >= @start AND t.date <= @end AND ${spendingClause(db, period)}
+      GROUP BY ${EFFECTIVE}`,
+  ).all(period) as Array<{ category: string; netCents: number }>;
+  return floorByCategory(rows).spendingCents;
 }
 
 export function largestTransactions(
@@ -170,17 +173,21 @@ export function categoryTrends(
   }) as Array<{ category: string; currentCents: number; priorCents: number }>;
 
   return rows
-    .map((r) => ({
-      category: r.category,
-      currentCents: r.currentCents || 0,
-      priorCents: r.priorCents || 0,
-      changeCents: (r.currentCents || 0) - (r.priorCents || 0),
-      // No prior spend means "new", not "infinity percent" — the caller decides
-      // how to word that, so report null rather than a misleading number.
-      changePct: r.priorCents > 0
-        ? Math.round((((r.currentCents || 0) - r.priorCents) / r.priorCents) * 100)
-        : null,
-    }))
+    .map((r) => {
+      // Floored like every other spending figure: a payout filed under a
+      // category is not negative spending in it.
+      const current = Math.max(0, r.currentCents || 0);
+      const prior = Math.max(0, r.priorCents || 0);
+      return {
+        category: r.category,
+        currentCents: current,
+        priorCents: prior,
+        changeCents: current - prior,
+        // No prior spend means "new", not "infinity percent" — the caller decides
+        // how to word that, so report null rather than a misleading number.
+        changePct: prior > 0 ? Math.round(((current - prior) / prior) * 100) : null,
+      };
+    })
     .filter((r) => r.currentCents > 0 || r.priorCents > 0)
     .sort((a, b) => Math.abs(b.changeCents) - Math.abs(a.changeCents));
 }

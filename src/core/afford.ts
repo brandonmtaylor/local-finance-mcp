@@ -14,7 +14,7 @@
 // maintenance reserve, no tax-bracket change, no closing costs.
 
 import type Database from 'better-sqlite3';
-import { resolveSpendingScope, coverageGaps } from './queries.js';
+import { resolveSpendingScope, coverageGaps, floorByCategory } from './queries.js';
 
 export interface BaselineOptions {
   /** Ignore transactions carrying any of these tags — one-offs, a move. */
@@ -101,15 +101,28 @@ export function computeBaseline(db: Database.Database, options: BaselineOptions 
       options.excludeTags.map((x) => `'${x.replace(/'/g, "''")}'`).join(',')}))`
     : '';
 
-  const perMonth = db.prepare(`
+  const perMonthRaw = db.prepare(`
     SELECT substr(t.date,1,7) AS month,
            COALESCE(SUM(CASE WHEN t.spend_group='income' THEN t.amount_cents END),0) AS income,
-           COALESCE(-SUM(CASE WHEN t.spend_group IN (${groupList}) THEN t.amount_cents END),0) AS spending,
            COALESCE(-SUM(CASE WHEN t.category='loan_payment' THEN t.amount_cents END),0) AS loans
       FROM visible_transactions t
      WHERE substr(t.date,1,7) IN (${monthList}) ${tagFilter}
      GROUP BY month
-  `).all() as Array<{ month: string; income: number; spending: number; loans: number }>;
+  `).all() as Array<{ month: string; income: number; loans: number }>;
+
+  // Spending per month, floored per category like every other spending figure:
+  // a claim payout filed as `insurance` would otherwise read as a month in
+  // which you spent less than nothing, and drag the median with it.
+  const byMonthCategory = db.prepare(`
+    SELECT substr(t.date,1,7) AS month, t.category, SUM(t.amount_cents) AS netCents
+      FROM visible_transactions t
+     WHERE substr(t.date,1,7) IN (${monthList}) AND t.spend_group IN (${groupList}) ${tagFilter}
+     GROUP BY month, t.category
+  `).all() as Array<{ month: string; category: string; netCents: number }>;
+  const perMonth = perMonthRaw.map((r) => ({
+    ...r,
+    spending: floorByCategory(byMonthCategory.filter((c) => c.month === r.month)).spendingCents,
+  }));
 
   const excluded = options.excludeTags?.length
     ? (db.prepare(`

@@ -157,6 +157,11 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, Category]> = [
   [/\b(electric|water|gas co|utilit(y|ies)|internet|comcast|xfinity|at&t|verizon|t-?mobile|spectrum|city of [a-z ]*utilit|municipal)\b/i, 'utilities'],
   // Statements abbreviate to "INS" far more often than they spell it out.
   [/\b(insurance|ins billing|ins prem|geico|allstate|state farm|progressive|farmers ins)\b/i, 'insurance'],
+  // A tax REFUND is income, not negative tax. Most tax is withheld from pay
+  // and never appears in the ledger as spending, so filing a refund under
+  // `taxes` subtracted it from spending that was never recorded. "310" is the
+  // Treasury's code for a tax-refund deposit.
+  [/\b(tax ref(und)?|irs treas 310|state tax refund)\b/i, 'income'],
   [/\b(irs|franchise tax|dept of revenue)\b/i, 'taxes'],
   [/\b(fee|overdraft|service charge|atm surcharge|late charge|interest charge)\b/i, 'fees'],
 
