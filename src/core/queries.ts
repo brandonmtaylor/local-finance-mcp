@@ -330,6 +330,12 @@ export interface SpendingSummary {
    * can be read without the caveat eventually is.
    */
   coverageGaps: CoverageGap[];
+  /**
+   * Set when the newest transaction in the ledger is well before the window
+   * ends — the other edge of coverage. A CSV import goes stale the day after
+   * it is made, and without this a window past the last export prints $0.
+   */
+  dataEnds: DataEnd | null;
   currency: string;
   /**
    * purchases + bills, as a POSITIVE number of cents. This is the only headline
@@ -472,6 +478,7 @@ export function getSpendingSummary(
     startDate,
     endDate,
     coverageGaps: coverageGaps(db, startDate, endDate),
+    dataEnds: dataEndsEarly(db, endDate),
     currency,
     spendingCents: floored.spendingCents,
     transactionCount: scope.groups.reduce((sum, g) => sum + countFor(g), 0),
@@ -695,6 +702,44 @@ export interface CoverageGap {
   earliest: string | null;
   /** Days of the requested window this account cannot speak for. */
   missingDays: number;
+}
+
+export interface DataEnd {
+  /** The newest transaction date in the ledger. */
+  latest: string;
+  /** Days between that and the end of the window. */
+  missingDays: number;
+}
+
+/**
+ * The ledger stops well before the window does.
+ *
+ * coverageGaps names accounts that START late; this names a ledger that ENDS
+ * early. A CSV export is a snapshot, so a "last 30 days" view a few weeks
+ * after the last import reports $0 spent, $0 earned — and "income exceeded
+ * spending" — when the truth is that nothing has been imported. Decision 10:
+ * a zero must be able to say why.
+ *
+ * Measured across the whole ledger, not per account, because one quiet
+ * account is normal and every account going quiet at once is not.
+ */
+export function dataEndsEarly(
+  db: Database.Database,
+  endDate: string,
+  materialDays = 10,
+): DataEnd | null {
+  const row = db.prepare('SELECT MAX(date) AS latest FROM visible_transactions')
+    .get() as { latest: string | null };
+  if (!row.latest) return null;
+  const missingDays = Math.round((Date.parse(endDate) - Date.parse(row.latest)) / 86_400_000);
+  return missingDays >= materialDays ? { latest: row.latest, missingDays } : null;
+}
+
+/** One line for anywhere a total is printed. */
+export function dataEndsMessage(d: DataEnd): string {
+  return `the ledger's newest transaction is ${d.latest}, ${d.missingDays} days before this window ends `
+    + '— anything after that has not been imported, so these totals are missing it. '
+    + 'Run `finance sync` (for CSV, download a newer export first).';
 }
 
 /**

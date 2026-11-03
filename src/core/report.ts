@@ -665,6 +665,16 @@ function renderPanel(data: ReportData, partial = false): string {
     this window cannot be compared with one they do cover.</div>
   </div>` : '';
 
+  // The other edge: the ledger stops before the window does. Without this a
+  // window past the last CSV import shows three zero tiles and nothing else.
+  const staleNote = summary.dataEnds ? `
+  <div class="coverage-gap">
+    <strong>Nothing has been imported after ${esc(summary.dataEnds.latest)}.</strong>
+    <div>That is ${summary.dataEnds.missingDays} days before this window ends, so these totals are
+    missing everything since. Run <code>finance sync</code> — for a CSV account, download a newer
+    export first.</div>
+  </div>` : '';
+
   const partialNote = partial ? `
   <div class="coverage-gap">
     <strong>This period is not over yet.</strong>
@@ -674,6 +684,7 @@ function renderPanel(data: ReportData, partial = false): string {
 
   return `
   <div class="panel-range">${data.startDate} to ${data.endDate}${partial ? ' (so far)' : ''}</div>
+  ${staleNote}
   ${partialNote}
   ${gaps}
   <div class="tiles">
@@ -694,7 +705,9 @@ function renderPanel(data: ReportData, partial = false): string {
       <div class="tile-label">Net</div>
       <div class="tile-value ${netCents >= 0 ? 'pos' : 'neg'}">${money(netCents)}</div>
       <div class="tile-note">over ${monthsLabel}</div>
-      <div class="tile-note">${money(Math.round(netCents / months))}/mo · ${netCents >= 0 ? 'income exceeded spending' : 'spending exceeded income'}</div>
+      <div class="tile-note">${money(Math.round(netCents / months))}/mo · ${summary.incomeCents === 0 && summary.spendingCents === 0
+    ? 'nothing recorded in this window'
+    : netCents >= 0 ? 'income exceeded spending' : 'spending exceeded income'}</div>
     </div>
   </div>
 

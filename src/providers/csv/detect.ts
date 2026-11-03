@@ -36,6 +36,11 @@ export interface DetectedColumns {
   credit?: string;
   description?: string;
   merchant?: string;
+  /**
+   * The bank's own category, when the export has one. Card exports nearly
+   * always do, and leaving it unmapped files most purchases under "other".
+   */
+  category?: string;
   /** Named so it can be shown as deliberately ignored rather than missed. */
   balance?: string;
   dateFormat?: string;
@@ -54,6 +59,7 @@ const HEADER_HINTS: Record<string, RegExp> = {
   balance: /balance|running[\s_-]*total/i,
   description: /^(description|memo|details?|narrative|transaction|reference)$/i,
   merchant: /^(merchant|payee|name|counterparty)$/i,
+  category: /^(transaction[\s_-]*)?category$/i,
 };
 
 const isBlank = (v: string | undefined) => v === undefined || v.trim() === '';
@@ -196,7 +202,10 @@ export function detectColumns(rows: Array<Record<string, string>>): DetectedColu
       + `using "${date}". If your statement reconciles against a different one, change it.`,
     );
   }
-  if (format && format.format.startsWith('MM') && sample.some((v) => {
+  // Only when EVERY sampled date fits both ways. One 04/15 settles it — the
+  // warning used to fire on any single ambiguous row, beside a preview whose
+  // own dates proved the order.
+  if (format && format.format.startsWith('MM') && sample.every((v) => {
     const [a, b] = v.split(/[/\-.]/);
     return Number(a) <= 12 && Number(b) <= 12;
   })) {
@@ -253,7 +262,8 @@ export function detectColumns(rows: Array<Record<string, string>>): DetectedColu
   // ── text ───────────────────────────────────────────────────────────────────
   // The description is the longest text field: banks put the merchant, the
   // reference and the channel in it, and everything else is short.
-  const byLength = [...textCols].sort((a, b) => (b.meanLength ?? 0) - (a.meanLength ?? 0));
+  const categoryCol = hinted(profiles, 'category', 'text');
+  const byLength = textCols.filter((p) => p !== categoryCol).sort((a, b) => (b.meanLength ?? 0) - (a.meanLength ?? 0));
   const description = (hinted(profiles, 'description', 'text') ?? byLength[0])?.name;
   const merchantHit = hinted(profiles, 'merchant', 'text');
   const merchant = merchantHit && merchantHit.name !== description ? merchantHit.name : undefined;
@@ -268,6 +278,7 @@ export function detectColumns(rows: Array<Record<string, string>>): DetectedColu
     ...(debit && credit ? { debit: debit.name, credit: credit.name } : {}),
     ...(description ? { description } : {}),
     ...(merchant ? { merchant } : {}),
+    ...(categoryCol && categoryCol.name !== description ? { category: categoryCol.name } : {}),
     ...(balance ? { balance: balance.name } : {}),
     ...(format ? { dateFormat: format.format } : {}),
     profiles,

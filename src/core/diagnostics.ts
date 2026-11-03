@@ -426,6 +426,67 @@ export function detectPayoutsInSpending(db: Database.Database, minCents = 50_000
   }];
 }
 
+/**
+ * A CSV account whose newest row is old.
+ *
+ * The Plaid checks above cannot see this: a CSV only changes when someone
+ * downloads a new export, so its syncs are always "nothing new" and that is
+ * normal. What is not normal is reading a "last 30 days" report built from an
+ * export taken two months ago — every tile reads $0, and nothing said why.
+ */
+export function detectStaleCsv(db: Database.Database, staleDays = 21, now = new Date()): Diagnostic[] {
+  const rows = db.prepare(`
+    SELECT a.name, a.mask, MAX(t.date) AS latest
+      FROM accounts a
+      JOIN sources s     ON s.account_id = a.account_id
+      JOIN connections c ON c.connection_id = s.connection_id AND c.active = 1
+      JOIN providers p   ON p.provider_id = c.provider_id AND p.kind = 'csv'
+      JOIN visible_transactions t ON t.account_id = a.account_id
+     GROUP BY a.account_id
+  `).all() as Array<{ name: string; mask: string | null; latest: string }>;
+
+  const stale = rows
+    .map((r) => ({ ...r, age: Math.floor((now.getTime() - Date.parse(`${r.latest}T00:00:00Z`)) / 86_400_000) }))
+    .filter((r) => r.age > staleDays);
+  if (stale.length === 0) return [];
+  return [{
+    severity: 'warning',
+    code: 'csv-data-old',
+    message: `${stale.length} CSV account(s) have nothing newer than ${staleDays} days ago`,
+    detail: stale.map((r) => `${r.name}${r.mask ? ` ••${r.mask}` : ''} — newest transaction ${r.latest} (${r.age} days ago)`),
+    remedy: 'Recent reports are missing everything since. Download a fresh export from the bank '
+      + 'into the same folder, then run `finance sync`.',
+  }];
+}
+
+/**
+ * Most spending has no category.
+ *
+ * Totals stay right, but every breakdown — categories, trends, the AI's
+ * reading of them — is a breakdown of "other". The usual cause is a CSV whose
+ * Category column was never mapped: card exports nearly always carry one.
+ */
+export function detectUncategorised(db: Database.Database, minShare = 0.25, minCount = 10): Diagnostic[] {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS n,
+           COALESCE(SUM(CASE WHEN t.category = 'other' THEN 1 ELSE 0 END), 0) AS other,
+           COALESCE(SUM(CASE WHEN t.category = 'other' THEN -t.amount_cents ELSE 0 END), 0) AS otherCents
+      FROM visible_transactions t
+     WHERE t.spend_group IN ('purchases','bills') AND t.amount_cents < 0
+       AND t.date >= (SELECT date(MAX(date), '-90 days') FROM visible_transactions)
+  `).get() as { n: number; other: number; otherCents: number };
+  if (row.other < minCount || row.other / row.n < minShare) return [];
+  return [{
+    severity: 'warning',
+    code: 'mostly-uncategorised',
+    message: `${row.other} of ${row.n} purchases in the last 90 days of data (${dollars(row.otherCents)}) `
+      + 'have no category',
+    remedy: 'If a CSV export has a Category column, map it — add `category = "Category"` (the header '
+      + 'as it appears in the file) under that account\'s [providers.csv.accounts.columns], then run '
+      + '`finance sync`. For the rest, `finance categorize --match "<text>" --category <name>`.',
+  }];
+}
+
 export function runDiagnostics(db: Database.Database, now = new Date()): Diagnostic[] {
   return [
     ...detectUnlinkedCards(db),
@@ -435,6 +496,8 @@ export function runDiagnostics(db: Database.Database, now = new Date()): Diagnos
     ...detectSyncHealth(db, 3, now),
     ...detectEmptyAccounts(db),
     ...detectPayoutsInSpending(db),
+    ...detectStaleCsv(db, 21, now),
+    ...detectUncategorised(db),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 }
 

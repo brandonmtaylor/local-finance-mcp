@@ -9,6 +9,7 @@ import { existsSync, accessSync, constants, statSync, readdirSync, readFileSync 
 import { join, extname } from 'node:path';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { detectColumns, type DetectedColumns } from '../providers/csv/detect.js';
+import { parseAmountCents } from '../providers/csv/parse.js';
 import { expandPath } from './paths.js';
 
 export interface Check {
@@ -87,7 +88,12 @@ export interface CsvPreview {
   files: string[];
   detected: DetectedColumns;
   /** The first few rows as the importer would read them, for eyeballing. */
-  sample: Array<{ date: string; amount: string; description: string }>;
+  /**
+   * Amounts are SIGNED as the importer will store them — negative is money
+   * out. Showing the raw debit column printed a purchase as +50.18 beside a
+   * README saying positive means money in.
+   */
+  sample: Array<{ date: string; amount: string; description: string; category?: string }>;
   errors: string[];
 }
 
@@ -127,13 +133,26 @@ export function previewCsv(rawPath: string, limit = 5): CsvPreview {
   // Enough rows to judge a running balance (needs three) without reading a
   // year of history to answer a layout question.
   const detected = detectColumns(rows.slice(0, 25));
+  const signed = (r: Record<string, string>): string => {
+    const cents = (v: string | undefined) => {
+      if (!v || !v.trim()) return 0;
+      try { return Math.abs(parseAmountCents(v)); } catch { return 0; }
+    };
+    let value: number;
+    if (detected.amount) {
+      try { value = parseAmountCents(r[detected.amount] ?? ''); } catch { return r[detected.amount] ?? ''; }
+    } else if (detected.debit && detected.credit) {
+      value = cents(r[detected.credit]) - cents(r[detected.debit]);
+    } else {
+      return '';
+    }
+    return `${value < 0 ? '-' : '+'}${(Math.abs(value) / 100).toFixed(2)}`;
+  };
   const sample = rows.slice(0, limit).map((r) => ({
     date: detected.date ? r[detected.date] ?? '' : '',
-    amount: detected.amount
-      ? r[detected.amount] ?? ''
-      : [detected.debit && r[detected.debit], detected.credit && r[detected.credit]]
-        .filter(Boolean).join(' / '),
+    amount: signed(r),
     description: detected.description ? r[detected.description] ?? '' : '',
+    ...(detected.category ? { category: r[detected.category] ?? '' } : {}),
   }));
 
   return { path, files, detected, sample, errors };
@@ -181,6 +200,7 @@ export function csvAccountToml(account: {
   }
   lines.push(`description = ${JSON.stringify(detected.description ?? 'Description')}`);
   if (detected.merchant) lines.push(`merchant = ${JSON.stringify(detected.merchant)}`);
+  if (detected.category) lines.push(`category = ${JSON.stringify(detected.category)}`);
   if (detected.balance) {
     lines.push(`# "${detected.balance}" is a running balance and is deliberately not mapped —`);
     lines.push('# reading it as the amount would make every transaction the account balance.');

@@ -14,7 +14,8 @@
 import { execFileSync as execFileSyncUntimed, type ExecFileSyncOptions } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { financeHome } from './paths.js';
 
 // The scheduler's job label, deliberately unchanged by the rename. A new
@@ -22,6 +23,36 @@ import { financeHome } from './paths.js';
 // syncs, two reports, two emails every morning — while `schedule uninstall`
 // looked for the new one and left the old in place.
 const LABEL = 'com.finance-mcp.sync';
+const TASK = 'finance-mcp-sync';
+
+/**
+ * The data directory a job belongs to, when it is not the default one.
+ *
+ * One fixed job name meant a `schedule install` under FINANCE_HOME — a test
+ * profile, a second household — silently replaced the real daily job, and
+ * `schedule status` in the test profile reported the real one as its own. The
+ * default directory keeps the bare name, so an existing install is still
+ * recognised; any other gets a suffix derived from its path.
+ */
+function customHome(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = resolve(financeHome(env));
+  return home === resolve(financeHome({ ...env, FINANCE_HOME: '' })) ? null : home;
+}
+
+const suffix = (env: NodeJS.ProcessEnv = process.env): string => {
+  const home = customHome(env);
+  return home ? `-${createHash('sha256').update(home).digest('hex').slice(0, 8)}` : '';
+};
+
+/** launchd label for this data directory. */
+export function jobLabel(env: NodeJS.ProcessEnv = process.env): string {
+  return `${LABEL}${suffix(env)}`;
+}
+
+/** systemd unit / Task Scheduler name for this data directory. */
+export function taskName(env: NodeJS.ProcessEnv = process.env): string {
+  return `${TASK}${suffix(env)}`;
+}
 
 export interface ScheduleSpec {
   /** 24-hour local time. */
@@ -62,7 +93,7 @@ export function parseTime(value: string): ScheduleSpec {
 }
 
 export function launchAgentPath(): string {
-  return join(homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+  return join(homedir(), 'Library', 'LaunchAgents', `${jobLabel()}.plist`);
 }
 
 export function buildLaunchAgent(
@@ -76,7 +107,7 @@ export function buildLaunchAgent(
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${LABEL}</string>
+  <string>${jobLabel()}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${target.nodePath}</string>
@@ -93,7 +124,9 @@ ${command.map((c) => `    <string>${c}</string>`).join('\n')}
     <key>PATH</key>
     <string>${target.path ?? schedulePath()}</string>
     <key>HOME</key>
-    <string>${homedir()}</string>
+    <string>${homedir()}</string>${customHome() ? `
+    <key>FINANCE_HOME</key>
+    <string>${customHome()}</string>` : ''}
   </dict>
   <key>StandardOutPath</key>
   <string>${join(logDir, 'sync.log')}</string>
@@ -119,7 +152,7 @@ Description=finance-mcp scheduled sync
 [Service]
 Type=oneshot
 Environment=PATH=${target.path ?? schedulePath()}
-ExecStart=${target.nodePath} ${target.cliPath} ${command.join(' ')}
+${customHome() ? `Environment=FINANCE_HOME=${customHome()}\n` : ''}ExecStart=${target.nodePath} ${target.cliPath} ${command.join(' ')}
 `,
     timer: `[Unit]
 Description=finance-mcp daily sync
@@ -167,7 +200,7 @@ export function installSchedule(
     // harmlessly when nothing is loaded.
     const domain = `gui/${process.getuid?.() ?? 501}`;
     try {
-      execFileSync('launchctl', ['bootout', `${domain}/${LABEL}`], { stdio: 'ignore' });
+      execFileSync('launchctl', ['bootout', `${domain}/${jobLabel()}`], { stdio: 'ignore' });
     } catch {
       /* not loaded */
     }
@@ -179,21 +212,28 @@ export function installSchedule(
     const unitDir = join(homedir(), '.config', 'systemd', 'user');
     mkdirSync(unitDir, { recursive: true });
     const units = buildSystemdUnits(spec, target, command);
-    writeFileSync(join(unitDir, 'finance-mcp-sync.service'), units.service);
-    writeFileSync(join(unitDir, 'finance-mcp-sync.timer'), units.timer);
+    writeFileSync(join(unitDir, `${taskName()}.service`), units.service);
+    writeFileSync(join(unitDir, `${taskName()}.timer`), units.timer);
     execFileSync('systemctl', ['--user', 'daemon-reload']);
-    execFileSync('systemctl', ['--user', 'enable', '--now', 'finance-mcp-sync.timer']);
+    execFileSync('systemctl', ['--user', 'enable', '--now', `${taskName()}.timer`]);
     return { installed: true, platform: os, path: unitDir };
   }
 
   if (os === 'win32') {
+    // Task Scheduler cannot set an environment variable for a task, so a job
+    // for a non-default directory would run against the default ledger.
+    // Refusing beats a schedule that quietly reads the wrong data.
+    if (customHome()) {
+      throw new Error('scheduling a non-default FINANCE_HOME is not supported on Windows yet — '
+        + 'unset FINANCE_HOME, or schedule `finance run` yourself with it set');
+    }
     const time = `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
     execFileSync('schtasks', [
-      '/Create', '/F', '/SC', 'DAILY', '/TN', 'finance-mcp-sync',
+      '/Create', '/F', '/SC', 'DAILY', '/TN', taskName(),
       '/TR', `"${target.nodePath}" "${target.cliPath}" ${command.join(' ')}`,
       '/ST', time,
     ]);
-    return { installed: true, platform: os, detail: 'Task Scheduler: finance-mcp-sync' };
+    return { installed: true, platform: os, detail: `Task Scheduler: ${taskName()}` };
   }
 
   throw new Error(`scheduling is not supported on ${os}`);
@@ -206,7 +246,7 @@ export function uninstallSchedule(): ScheduleStatus {
     const path = launchAgentPath();
     const domain = `gui/${process.getuid?.() ?? 501}`;
     try {
-      execFileSync('launchctl', ['bootout', `${domain}/${LABEL}`], { stdio: 'ignore' });
+      execFileSync('launchctl', ['bootout', `${domain}/${jobLabel()}`], { stdio: 'ignore' });
     } catch {
       /* not loaded */
     }
@@ -216,7 +256,7 @@ export function uninstallSchedule(): ScheduleStatus {
 
   if (os === 'linux') {
     try {
-      execFileSync('systemctl', ['--user', 'disable', '--now', 'finance-mcp-sync.timer'], { stdio: 'ignore' });
+      execFileSync('systemctl', ['--user', 'disable', '--now', `${taskName()}.timer`], { stdio: 'ignore' });
     } catch {
       /* not enabled */
     }
@@ -225,7 +265,7 @@ export function uninstallSchedule(): ScheduleStatus {
 
   if (os === 'win32') {
     try {
-      execFileSync('schtasks', ['/Delete', '/F', '/TN', 'finance-mcp-sync'], { stdio: 'ignore' });
+      execFileSync('schtasks', ['/Delete', '/F', '/TN', taskName()], { stdio: 'ignore' });
     } catch {
       /* not present */
     }
@@ -254,7 +294,7 @@ export function scheduleStatus(): ScheduleStatus {
 
   if (os === 'linux') {
     try {
-      const out = execFileSync('systemctl', ['--user', 'is-enabled', 'finance-mcp-sync.timer'], {
+      const out = execFileSync('systemctl', ['--user', 'is-enabled', `${taskName()}.timer`], {
         encoding: 'utf8',
       });
       return { installed: String(out).trim() === 'enabled', platform: os };
@@ -265,7 +305,7 @@ export function scheduleStatus(): ScheduleStatus {
 
   if (os === 'win32') {
     try {
-      execFileSync('schtasks', ['/Query', '/TN', 'finance-mcp-sync'], { stdio: 'ignore' });
+      execFileSync('schtasks', ['/Query', '/TN', taskName()], { stdio: 'ignore' });
       return { installed: true, platform: os };
     } catch {
       return { installed: false, platform: os };

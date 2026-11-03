@@ -81,6 +81,8 @@ describe('prior-period guard', () => {
     txn(({ date: '2026-05-02', amountCents: -2_000 }));
     txn(({ date: '2026-05-10', amountCents: -8_000 }));
     txn(({ date: '2026-06-15', amountCents: -20_000 }));
+    // Covered to its end, too: a ledger stopping mid-window is not comparable.
+    txn(({ date: '2026-06-30', amountCents: 300_000, category: 'income' }));
 
     const brief = collectInsights(db, '2026-06-01', '2026-06-30');
     expect(brief.priorPeriodComparable).toBe(true);

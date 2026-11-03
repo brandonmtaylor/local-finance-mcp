@@ -138,6 +138,10 @@ mistakes that are expensive to make, all of which were made here first.
   viewBox and still missed two blocks touching. A person saw it immediately.
 - Do not install a real LaunchAgent to verify scheduling — test the generated
   plist as a string.
+- The job name is per data directory: the default one keeps the bare
+  `com.finance-mcp.sync`, any other `FINANCE_HOME` gets a hashed suffix and
+  passes `FINANCE_HOME` to the job. A single name let a test profile replace
+  the real daily job, which then ran against the real ledger anyway.
 
 ## Scheduled jobs (`finance run`)
 

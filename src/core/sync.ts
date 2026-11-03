@@ -104,7 +104,15 @@ function writeConnection(
   // re-delivers every row of every file as `added` on every run, so trusting
   // the list printed "+55 added" for a sync that changed nothing — which reads
   // as "it duplicated everything". A row already held is not an addition.
-  const held = db.prepare('SELECT 1 FROM transactions WHERE source_id = ? AND external_id = ?');
+  //
+  // The reverse holds too: a re-delivered row is a modification when what it
+  // says changed. Mapping a CSV's Category column re-categorises every row on
+  // the next sync, and reporting "0 modified" for that reads as "it ignored
+  // the change".
+  const held = db.prepare(
+    `SELECT date, amount_cents AS amountCents, merchant_name AS merchantName, category, pending
+       FROM transactions WHERE source_id = ? AND external_id = ?`,
+  );
   for (const [rows, isNew] of [[connection.added, true], [connection.modified, false]] as const) {
     for (const row of rows) {
       const source = sources.get(row.accountExternalId);
@@ -112,11 +120,15 @@ function writeConnection(
       // the only safe move: inventing an account here would create exactly the
       // phantom duplicates this design exists to prevent.
       if (!source) continue;
-      const existed = held.get(source.sourceId, row.externalId) !== undefined;
+      const before = held.get(source.sourceId, row.externalId) as {
+        date: string; amountCents: number; merchantName: string | null; category: string; pending: number;
+      } | undefined;
       upsertTransaction(db, source.sourceId, source.accountId, row);
       dates.push(row.date);
-      if (!existed) added += 1;
-      else if (!isNew) modified += 1;
+      if (!before) added += 1;
+      else if (!isNew || before.category !== row.category || before.date !== row.date
+        || before.amountCents !== row.amountCents || before.merchantName !== (row.merchantName ?? null)
+        || before.pending !== (row.pending ? 1 : 0)) modified += 1;
     }
   }
 

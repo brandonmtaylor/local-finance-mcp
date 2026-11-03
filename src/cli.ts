@@ -3,7 +3,7 @@
 // scheduler calls, and the one you use to set things up.
 
 import { Command } from 'commander';
-import { existsSync, writeFileSync, mkdirSync, statSync, appendFileSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, statSync, appendFileSync, readFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
@@ -26,7 +26,7 @@ import {
   openLedger, setCategoryOverride, setNote, addTag, removeTag, normalizeTag,
   setConnectionActive,
 } from './core/ledger.js';
-import { listAccounts, getSpendingSummary, runReadOnlyQuery, queryTransactions, tagTotals, noDataReason } from './core/queries.js';
+import { listAccounts, getSpendingSummary, runReadOnlyQuery, queryTransactions, tagTotals, noDataReason, dataEndsEarly, dataEndsMessage } from './core/queries.js';
 import { syncAll, backfillProvider } from './core/sync.js';
 import { withLock } from './core/lock.js';
 import { buildProviders } from './providers/registry.js';
@@ -474,7 +474,9 @@ program
     // Income arrives on a cadence; most spending does not. A window that
     // catches one payday fewer than usual makes the net look like overspending
     // when nothing about the spending changed.
-    const cadence = incomeCadence(db, s.startDate, s.endDate);
+    // Not when the ledger stops early: missing paydays are then missing data,
+    // and "LOW for calendar reasons alone" would be the wrong explanation.
+    const cadence = s.dataEnds ? null : incomeCadence(db, s.startDate, s.endDate);
     if (cadence && Math.abs(cadence.observed - cadence.expected) >= 0.5) {
       const short = cadence.observed < cadence.expected;
       console.log('');
@@ -488,6 +490,11 @@ program
         : `    You are paid about every ${cadence.medianGapDays} days, so income here is`);
       console.log(`    ${short ? 'LOW' : 'HIGH'} by roughly ${money(cadence.typicalCents)} for calendar reasons alone —`);
       console.log('    the net figure is not a change in behaviour.');
+    }
+
+    if (s.dataEnds) {
+      console.log('');
+      console.log(`  ! ${dataEndsMessage(s.dataEnds)}`);
     }
 
     // The caveat goes with the number, every time it is shown. A total that
@@ -542,6 +549,7 @@ program
       ? { start: opts.start, end: opts.end ?? new Date().toISOString().slice(0, 10) }
       : resolveRange((opts.range ?? 'last-30-days') as never, new Date(), db);
     const brief = collectInsights(db, r.start, r.end);
+    const ends = dataEndsEarly(db, r.end);
     db.close();
 
     if (opts.json) {
@@ -556,9 +564,11 @@ program
         ? ` (${pct(brief.spendingChangePct)} vs prior ${brief.priorPeriod.start} → ${brief.priorPeriod.end})`
         : ''));
     console.log(`  Income   ${money(brief.incomeCents)}   Net ${money(brief.netCents)}`);
+    if (ends) console.log(`  ! ${dataEndsMessage(ends)}`);
     if (!brief.priorPeriodComparable) {
       // Saying nothing would imply the comparison was made and found nothing.
-      console.log(`  (no comparison — the ledger does not reach back to ${brief.priorPeriod.start})`);
+      console.log(ends ? '  (no comparison — this window is not covered to its end)'
+      : `  (no comparison — the ledger does not reach back to ${brief.priorPeriod.start})`);
     }
 
     if (brief.concentration.length) {
@@ -1381,7 +1391,7 @@ program
       const answer = (await rl.question(fallback ? `${q} [${fallback}] ` : `${q} `)).trim();
       return answer || fallback;
     };
-    const yes = async (q: string) => /^y/i.test(await ask(`${q} (y/n)`, 'y'));
+    const yes = async (q: string, fallback: 'y' | 'n' = 'y') => /^y/i.test(await ask(`${q} (y/n)`, fallback));
 
     try {
       console.log('\nChecking this machine…\n');
@@ -1413,10 +1423,20 @@ program
       console.log('  1. A CSV export from your bank — works right now, no signup');
       console.log('  2. Plaid — automatic, but needs an account and API keys\n');
 
-      if (await yes('Set up a CSV account now?')) await setupCsvAccount(ask, yes);
-      else console.log('  skipped — add one later with `finance setup`.');
+      // One export per account: a checking account and a card are two files
+      // with different layouts, and the card is where the categories are.
+      let added = 0;
+      if (await yes('Set up a CSV account now?')) {
+        do {
+          if (await setupCsvAccount(ask, yes, added)) added += 1;
+        } while (await yes('\n  Add another CSV account — a credit card, say?', 'n'));
+      } else {
+        console.log('  skipped — add one later with `finance setup`.');
+      }
 
-      if (hasBinary('plaid') && await yes('\nSet up Plaid as well?')) {
+      // Both default to no. Each only prints the next commands, but Enter
+      // through a wizard should never read as agreeing to more setup.
+      if (hasBinary('plaid') && await yes('\nSet up Plaid as well?', 'n')) {
         console.log('\n  1. Create a team at dashboard.plaid.com and find its keys');
         console.log('  2. finance secret set plaid client_id');
         console.log('  3. finance secret set plaid secret');
@@ -1424,11 +1444,16 @@ program
         console.log('  The secret command verifies the keys before trusting them.');
       }
 
-      if (await yes('\nRun a daily sync automatically?')) {
+      if (await yes('\nRun a daily sync automatically?', 'n')) {
         console.log('  finance schedule install --daily 07:00');
       }
 
-      console.log('\nDone. `finance doctor` will tell you if anything is off.');
+      console.log('\nDone. Next:');
+      if (added > 0) {
+        console.log('  finance sync            import what was just configured');
+        console.log('  finance report --open   see it');
+      }
+      console.log('  finance doctor          tells you if anything is off');
     } catch (err) {
       if ((err as Error).message === 'input closed') {
         console.error('\n\nInput ended before setup finished — nothing further was written.');
@@ -1461,15 +1486,16 @@ function hasBinary(name: string): boolean {
  */
 async function setupCsvAccount(
   ask: (q: string, fallback?: string) => Promise<string>,
-  yes: (q: string) => Promise<boolean>,
-): Promise<void> {
+  yes: (q: string, fallback?: 'y' | 'n') => Promise<boolean>,
+  alreadyAdded: number,
+): Promise<boolean> {
   const path = await ask('\n  Folder or file with your CSV exports:');
-  if (!path) return;
+  if (!path) return false;
 
   const preview = previewCsv(path);
   if (preview.errors.length) {
     for (const e of preview.errors) console.error(`  ${e}`);
-    return;
+    return false;
   }
 
   console.log(`\n  ${preview.files.length} file(s). Reading ${preview.files[0]}\n`);
@@ -1478,31 +1504,48 @@ async function setupCsvAccount(
   console.log(`    amount       ${d.amount ?? (d.debit && d.credit ? `${d.debit} / ${d.credit}` : '(not found)')}`);
   console.log(`    description  ${d.description ?? '(not found)'}`);
   if (d.merchant) console.log(`    merchant     ${d.merchant}`);
+  console.log(`    category     ${d.category ?? '(none — categories will be guessed from descriptions)'}`);
   if (d.balance) console.log(`    ${d.balance} — running balance, ignored`);
 
   for (const w of d.warnings) console.log(`\n  ! ${w}`);
 
-  console.log('\n  First rows as they would be imported:\n');
+  console.log('\n  First rows as they would be imported (negative = money out):\n');
   for (const row of preview.sample) {
-    console.log(`    ${row.date.padEnd(12)} ${row.amount.padStart(12)}  ${row.description.slice(0, 44)}`);
+    console.log(`    ${row.date.padEnd(12)} ${row.amount.padStart(12)}  ${row.description.slice(0, 44)}`
+      + (row.category ? `  [${row.category}]` : ''));
   }
 
   if (!await yes('\n  Does that look right?')) {
-    console.log('  Nothing written. Edit the config by hand — see docs/writing-a-provider.md.');
-    return;
+    console.log(`  Nothing written. Edit ${configPath()} by hand — the CSV section of the README`);
+    console.log('  explains each column setting.');
+    return false;
   }
 
-  const name = await ask('\n  Name for this account:', 'Checking');
+  // Ask the type first: it decides a sensible name, and a split debit/credit
+  // layout is what card exports usually look like.
+  const looksLikeCard = Boolean(d.debit && d.credit) || /card|visa|amex|mastercard/i.test(path);
+  const type = await ask('\n  Type — depository (checking/savings) or credit (a card):',
+    looksLikeCard ? 'credit' : 'depository');
+  const name = await ask('  Name for this account:',
+    type === 'credit' ? 'Credit card' : alreadyAdded > 0 ? 'Savings' : 'Checking');
   const mask = await ask('  Last 4 digits (optional):');
-  const type = await ask('  Type — depository or credit:', 'depository');
+
+  // Re-running setup must not append a second block with the same id, which
+  // would make two accounts out of one config entry's worth of files.
+  const existing = readFileSync(configPath(), 'utf8');
+  let accountId = slugify(name);
+  for (let n = 2; existing.includes(`accountId = ${JSON.stringify(accountId)}`); n += 1) {
+    accountId = `${slugify(name)}-${n}`;
+  }
 
   const toml = csvAccountToml({
-    accountId: slugify(name), name, type, path,
+    accountId, name, type, path,
     ...(mask ? { mask } : {}),
     detected: d,
   });
   appendFileSync(configPath(), toml);
-  console.log(`\n  Appended to ${configPath()}. Now: finance sync`);
+  console.log(`\n  Added "${name}" to ${configPath()}.`);
+  return true;
 }
 
 // ── connections ──────────────────────────────────────────────────────────────
@@ -2231,7 +2274,7 @@ program
     let config = defaultConfig();
     if (!existsSync(cfgPath)) {
       bad(`no config at ${cfgPath}`);
-      note('run `finance init`');
+      note('run `finance setup` (guided) or `finance init` (just the starter config)');
     } else {
       try {
         config = loadConfig();
@@ -2248,7 +2291,7 @@ program
     // for a file it had just written.
     if (!existsSync(dbPath)) {
       bad(`no ledger at ${dbPath}`);
-      note('run `finance init` — or `finance sync` once a provider is configured');
+      note('run `finance setup`, then `finance sync`');
     } else try {
       const db = openLedger();
       const accounts = listAccounts(db);

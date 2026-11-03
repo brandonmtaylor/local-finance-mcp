@@ -9,6 +9,7 @@ model and no network involved.
 ```bash
 npm install -g local-finance-mcp
 finance setup           # point it at a CSV export from your bank — no account needed
+finance sync            # import it
 finance report --open   # a self-contained HTML report
 ```
 
@@ -254,8 +255,7 @@ finance secret set plaid secret
 test Items with no browser and no real bank. It costs nothing, exercises every code path, and means
 your first real link is not also your first time running any of this.
 
-Then enable it in the config and `finance sync`. Start in `environment = "sandbox"` — `plaid sandbox
-link` creates test Items with no browser and no real bank.
+Then enable it in the config and `finance sync`.
 
 **Ask for the history you want, at link time.** This is the one setting you cannot
 change later:
@@ -338,6 +338,7 @@ them:
 accountId = "checking"
 name = "Checking"
 mask = "1234"                    # last 4 only; full numbers are never stored
+type = "depository"              # depository (checking, savings) or credit (a card)
 path = "~/Documents/statements/checking"
 dateFormat = "MM/DD/YYYY"
 negativeIsSpending = true
@@ -346,7 +347,21 @@ negativeIsSpending = true
   date = "Date"
   amount = "Amount"
   description = "Description"
+  category = "Category"          # if the export has one — see below
 ```
+
+**One block per account.** A checking account and a card are two exports with two layouts, so each
+gets its own `[[providers.csv.accounts]]` with its own folder. `finance setup` offers to add another
+after the first, and running it again later adds to the config rather than replacing it.
+
+**Map the bank's Category column if there is one.** Card exports nearly always have it. Without it,
+categories are guessed from descriptions alone, and most purchases land in `other`. `finance setup`
+detects it, and `finance doctor` says so when most spending is uncategorised. Adding it later is
+fine: the next `finance sync` recategorises what is already there.
+
+**A CSV is a snapshot.** It holds what you downloaded and nothing newer, so the reports go stale
+until you drop a newer export in the same folder and sync again. The summary, the report and
+`finance doctor` all say when the newest transaction is well before the period you asked about.
 
 Split debit/credit columns work too — set `debit` and `credit` instead of `amount`.
 
@@ -665,8 +680,8 @@ is invisible.
 
 **Every report is saved on your computer first**, in `reports/` under the data directory. On macOS
 that is `~/Library/Application Support/finance-mcp/reports/report-<start>_<end>.html`. Reports are
-kept until you delete them, and a failed delivery never costs you one. `finance report --open`
-opens the newest one in a browser.
+kept until you delete them, and a failed delivery never costs you one. `finance report --out <path>`
+writes it somewhere else instead, and `--open` opens the one it just wrote in a browser.
 
 `deliver` in `[report]` picks how you hear about it. List as many channels as you like:
 

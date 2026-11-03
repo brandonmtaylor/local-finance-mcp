@@ -9,7 +9,7 @@
 // never runs while every manual invocation works fine.
 
 import { describe, it, expect } from 'vitest';
-import { buildLaunchAgent, buildSystemdUnits, parseTime } from '../src/core/schedule.js';
+import { buildLaunchAgent, buildSystemdUnits, parseTime, jobLabel, taskName } from '../src/core/schedule.js';
 
 const target = {
   nodePath: '/opt/homebrew/Cellar/node/23.2.0/bin/node',
@@ -84,5 +84,39 @@ describe('buildSystemdUnits', () => {
 
   it('is Persistent so a missed run catches up after the machine was off', () => {
     expect(timer).toContain('Persistent=true');
+  });
+});
+
+describe('one job per data directory', () => {
+  // A single fixed job name meant `schedule install` under a test FINANCE_HOME
+  // replaced the real daily job — and the plist never passed FINANCE_HOME, so
+  // the replacement ran against the real ledger anyway.
+  const withHome = <T>(home: string | undefined, fn: () => T): T => {
+    const saved = process.env.FINANCE_HOME;
+    if (home === undefined) delete process.env.FINANCE_HOME; else process.env.FINANCE_HOME = home;
+    try { return fn(); } finally {
+      if (saved === undefined) delete process.env.FINANCE_HOME; else process.env.FINANCE_HOME = saved;
+    }
+  };
+
+  it('keeps the bare name for the default directory, so an existing install is still found', () => {
+    withHome(undefined, () => {
+      expect(jobLabel()).toBe('com.finance-mcp.sync');
+      expect(taskName()).toBe('finance-mcp-sync');
+      expect(buildLaunchAgent({ hour: 7, minute: 0 }, target)).not.toContain('FINANCE_HOME');
+    });
+  });
+
+  it('gives another directory its own job, which runs against that directory', () => {
+    withHome('/tmp/profile-a', () => {
+      const label = jobLabel();
+      expect(label).toMatch(/^com\.finance-mcp\.sync-[0-9a-f]{8}$/);
+      const plist = buildLaunchAgent({ hour: 7, minute: 0 }, target);
+      expect(plist).toContain(`<string>${label}</string>`);
+      expect(plist).toMatch(/<key>FINANCE_HOME<\/key>\s*<string>\/tmp\/profile-a<\/string>/);
+      expect(buildSystemdUnits({ hour: 7, minute: 0 }, target).service)
+        .toContain('Environment=FINANCE_HOME=/tmp/profile-a');
+    });
+    expect(withHome('/tmp/profile-b', jobLabel)).not.toBe(withHome('/tmp/profile-a', jobLabel));
   });
 });

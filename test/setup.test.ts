@@ -83,8 +83,9 @@ describe('previewCsv', () => {
       + '2026-07-14,SHELL OIL,45.00,\n2026-07-15,PAYMENT,,2100.00\n');
     const p = previewCsv(dir);
     expect(p.detected.debit).toBe('Debit');
-    expect(p.sample[0]!.amount).toBe('45.00');
-    expect(p.sample[1]!.amount).toBe('2100.00');
+    // Signed as stored: a debit is money out.
+    expect(p.sample[0]!.amount).toBe('-45.00');
+    expect(p.sample[1]!.amount).toBe('+2100.00');
   });
 
   it('reports a path that does not exist', () => {

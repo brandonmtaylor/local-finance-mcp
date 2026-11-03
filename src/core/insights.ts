@@ -12,7 +12,7 @@
 
 import type Database from 'better-sqlite3';
 
-import { resolveSpendingScope, floorByCategory } from './queries.js';
+import { resolveSpendingScope, floorByCategory, dataEndsEarly } from './queries.js';
 
 const EFFECTIVE = 't.category';
 
@@ -338,9 +338,13 @@ export function collectInsights(
   const earliest = (db.prepare(
     'SELECT MIN(date) AS d FROM visible_transactions',
   ).get() as { d: string | null }).d;
+  // And it has to cover THIS window to its end. A ledger that stops partway
+  // through compares a few days against a full prior window, and an export
+  // taken before the window began read as "-100%".
   const priorPeriodComparable = earliest !== null
     && earliest <= prior.start
-    && priorSpendingCents > 0;
+    && priorSpendingCents > 0
+    && dataEndsEarly(db, period.end) === null;
   const income = db.prepare(
     `SELECT COALESCE(SUM(t.amount_cents),0) AS cents FROM visible_transactions t
       WHERE t.date >= @start AND t.date <= @end AND t.spend_group='income'`,
