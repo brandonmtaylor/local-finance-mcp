@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # better-sqlite3 is a native module — macOS and Linux are where installs
+    # actually break, so both run.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Never let a test run near a real ledger. Must end in finance-mcp:
+      # test/naming.test.ts asserts the data dir name.
+      FINANCE_HOME: ${{ github.workspace }}/.ci/finance-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: CLI starts
+        run: node dist/cli.js --help

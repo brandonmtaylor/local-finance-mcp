@@ -1,0 +1,117 @@
+{
+  "items": [
+    {
+      "item": {
+        "item_id": "QN787DovwViQ4ovbeoVXIe55yRDw7lIkB7wQR",
+        "institution_id": "ins_56"
+      },
+      "added": [],
+      "modified": [],
+      "removed": [],
+      "cursor": "CURSOR_REDACTED_FOR_FIXTURE"
+    },
+    {
+      "item": {
+        "item_id": "Aj866WrandCVvp4V7qp3SpN4rJPNjBiW3ba3a",
+        "institution_id": "ins_56"
+      },
+      "added": [
+        {
+          "transaction_id": "Qnw66A1EJ8fKbElKANE9Uev1GxnyePc3Gw9Jq",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": -500,
+          "date": "2026-08-10",
+          "name": "United Airlines",
+          "merchant_name": "United Airlines",
+          "category": [
+            "Travel",
+            "Airlines and Aviation Services"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "in store"
+        },
+        {
+          "transaction_id": "Z3X66AKvq9T8raP8A3a9Ujr3MzAZjKcrJeMNZ",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": 12,
+          "date": "2026-08-09",
+          "name": "McDonald's",
+          "merchant_name": "McDonald's",
+          "category": [
+            "Food and Drink",
+            "Restaurants",
+            "Fast Food"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "in store"
+        },
+        {
+          "transaction_id": "Mkv66Vep7LuEd4DENP4MSWKL3pREWqTe4L3En",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": 4.33,
+          "date": "2026-08-09",
+          "name": "Starbucks",
+          "merchant_name": "Starbucks",
+          "category": [
+            "Food and Drink",
+            "Restaurants",
+            "Coffee Shop"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "in store"
+        },
+        {
+          "transaction_id": "1nd55BjblvfG3MkGXBMJsod84WGwopFZqp4GM",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": 89.4,
+          "date": "2026-08-08",
+          "name": "SparkFun",
+          "merchant_name": "FUN",
+          "category": [
+            "Food and Drink",
+            "Restaurants"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "in store"
+        },
+        {
+          "transaction_id": "L8v66w7LV1iJaN9JMPNmtoyX7KMxoNFlek1y1",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": 6.33,
+          "date": "2026-07-26",
+          "name": "Uber 072515 SF**POOL**",
+          "merchant_name": "Uber",
+          "category": [
+            "Travel",
+            "Taxi"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "online"
+        },
+        {
+          "transaction_id": "pGNZZm815jU71MD73QMWSwEjGVznwKhEJpBNa",
+          "account_id": "L8v66w7LV1iJaN9JMPNmtoyk4mAv9EUd5BqRq",
+          "amount": 5.4,
+          "date": "2026-07-13",
+          "name": "Uber 063015 SF**POOL**",
+          "merchant_name": "Uber",
+          "category": [
+            "Travel",
+            "Taxi"
+          ],
+          "pending": false,
+          "iso_currency_code": "USD",
+          "payment_channel": "online"
+        }
+      ],
+      "modified": [],
+      "removed": [],
+      "cursor": "CURSOR_REDACTED_FOR_FIXTURE"
+    }
+  ]
+}

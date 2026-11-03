@@ -1,0 +1,63 @@
+# finance-mcp configuration
+#
+# This file holds settings only — never credentials. Secrets live in the OS
+# keystore; use `finance secret set <provider> <key>`.
+
+timezone = "America/New_York"   # your IANA time zone, e.g. Europe/London
+baseCurrency = "USD"
+
+[freshness]
+# Balances are billed per call by some providers, so they are cached hard.
+balanceTtlMinutes = 15
+# Transaction syncs are usually subscription-priced (flat monthly per account),
+# so refreshing them costs nothing extra and this can stay short.
+transactionTtlHours = 6
+# A query whose window closed more than this many days ago never triggers a
+# sync — settled data cannot change, so historical questions stay instant.
+settledAfterDays = 3
+# Answer immediately from cache and refresh in the background. Off by default:
+# a fresh answer is usually worth a few seconds.
+staleWhileRevalidate = false
+
+# ── CSV ──────────────────────────────────────────────────────────────────────
+# Import your bank's "Download transactions" export. No signup, no API cost,
+# works with any institution. Manual: you download the file yourself.
+
+[providers.csv]
+enabled = true
+
+# [[providers.csv.accounts]]
+# accountId = "checking"
+# name = "Checking"
+# mask = "1234"                 # last 4 only; full numbers are never stored
+# type = "depository"           # depository | credit | loan | investment | other
+# path = "~/Documents/statements/checking"   # a directory of .csv files, or one file
+# dateFormat = "MM/DD/YYYY"
+# negativeIsSpending = true     # true when a negative number means money left the account
+#
+#   [providers.csv.accounts.columns]
+#   date = "Date"
+#   amount = "Amount"
+#   description = "Description"
+
+# Split debit/credit columns instead of one signed column:
+#
+# [[providers.csv.accounts]]
+# accountId = "card"
+# name = "Credit Card"
+# type = "credit"
+# path = "~/Documents/statements/card"
+# dateFormat = "YYYY-MM-DD"
+#
+#   [providers.csv.accounts.columns]
+#   date = "Transaction Date"
+#   debit = "Debit"
+#   credit = "Credit"
+#   description = "Description"
+
+# ── Plaid ────────────────────────────────────────────────────────────────────
+# Automatic bank sync. Requires a Plaid account; start in sandbox.
+
+[providers.plaid]
+enabled = false
+environment = "sandbox"

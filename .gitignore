@@ -1,0 +1,19 @@
+# Never commit financial data or credentials.
+# The ledger lives in the platform data dir by default, but belt-and-braces:
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+inbox/
+config.toml
+!config.example.toml
+.env
+.env.*
+
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
