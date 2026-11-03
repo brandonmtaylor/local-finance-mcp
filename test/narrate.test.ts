@@ -76,9 +76,24 @@ describe('narrate', () => {
   });
 
   it('treats empty output as failure rather than an empty analysis', () => {
-    const r = narrate(brief(), { ...cfg, command: 'true', args: [] });
+    // Reads the prompt, so the result does not depend on a race with stdin.
+    const r = narrate(brief(), { ...cfg, command: 'sh', args: ['-c', 'cat >/dev/null'] });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/no output/);
+  });
+
+  it('keeps the answer of a command that exits before reading the prompt', () => {
+    // `echo` ignores stdin. Whether writing the prompt hits EPIPE depends on
+    // timing, so this must pass either way: the command succeeded and answered.
+    for (let i = 0; i < 5; i++) {
+      expect(narrate(brief(), { ...cfg, command: 'echo', args: ['ok'] })).toMatchObject({ ok: true, markdown: 'ok' });
+    }
+  });
+
+  it('still fails a command that exits early with nothing to say', () => {
+    const r = narrate(brief(), { ...cfg, command: 'true', args: [] });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no output|exited before reading the prompt/);
   });
 
   it('reports a non-zero exit', () => {

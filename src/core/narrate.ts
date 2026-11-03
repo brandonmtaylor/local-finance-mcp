@@ -174,6 +174,13 @@ export function narrate(brief: InsightsBrief, config: NarrationConfig): Narratio
     // rejects its arguments, or one not logged in, both land here. The raw
     // "spawnSync <cmd> EPIPE" tells the reader nothing about which, and it is
     // what surfaces in the report when the analysis goes missing.
+    //
+    // But EPIPE is a race, not a verdict: a command that answers without
+    // reading its input (or reads only part of it) can finish first and
+    // still succeed. Throwing that answer away made the analysis vanish at
+    // random — seen as CI failing on one runner and passing on the next.
+    const answered = res.status === 0 ? (res.stdout || '').trim() : '';
+    if (err.code === 'EPIPE' && answered) return { ok: true, markdown: answered, producedBy };
     if (err.code === 'EPIPE') {
       return {
         ok: false,
