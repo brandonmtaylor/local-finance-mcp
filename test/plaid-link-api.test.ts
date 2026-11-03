@@ -239,6 +239,10 @@ describe('link --days end to end', () => {
     onProgress: () => {},
     linkDeps: {
       sleep: async () => {},          // no real waiting
+      // Never the real opener: on macOS it runs `open`, which pops a browser
+      // tab on a desktop and can hang for its full 5s timeout on a headless
+      // CI runner — enough to push a test past vitest's own 5s limit.
+      openUrl: () => {},
       now: (() => { let t = 0; return () => { t += 1_000; return t; }; })(),
       ...over,
     },
@@ -457,6 +461,7 @@ describe('institution_id on an API-created Item', () => {
     return createPlaidProvider({
       id: 'plaid', environment: 'production', daysRequested: 730, onProgress: () => {},
       linkDeps: {
+        openUrl: () => {},   // never the real browser opener in a test
         fetcher,
         sleep: async () => {},
         now: (() => { let t = 0; return () => { t += 1_000; return t; }; })(),

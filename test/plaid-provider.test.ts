@@ -459,6 +459,7 @@ describe('awaitHistory', () => {
       },
       // No real waiting, and a clock the test controls.
       linkDeps: {
+        openUrl: () => {},   // never the real browser opener in a test
         sleep: async () => {},
         now: (() => { let t = 0; return () => { t += 1_000; return t; }; })(),
       },
@@ -493,6 +494,7 @@ describe('awaitHistory', () => {
         ? { status: 0, stdout: JSON.stringify({ items: [{ item_id: 'i' }] }), stderr: '' }
         : { status: 0, stdout: JSON.stringify({ total_transactions: counter++ }), stderr: '' }),
       linkDeps: {
+        openUrl: () => {},   // never the real browser opener in a test
         sleep: async () => {},
         now: (() => { let t = 0; return () => { t += 10_000; return t; }; })(),
       },
