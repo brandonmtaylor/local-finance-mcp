@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import type { IncomingAccount, IncomingTransaction } from '../../core/ledger.js';
 import {
   createHostedLink, pollLinkSession, exchangePublicToken, getItemInstitution, type Fetcher,
+  type LinkExited,
 } from './api.js';
 import { addItemToCliConfig } from './cliStore.js';
 import type {
@@ -376,13 +377,13 @@ async function linkViaApi(
     };
 
     onProgress(`Resuming the link started earlier (expires ${pending.expiration})…`);
-    let completedNow: { publicToken: string; institutionId: string | null } | null = null;
+    let completedNow: { publicToken: string; institutionId: string | null } | LinkExited | null = null;
     try {
       completedNow = await pollLinkSession(credentials, pending.linkToken, fetcher);
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-    if (!completedNow) {
+    if (!completedNow || 'exited' in completedNow) {
       return {
         ok: false,
         message: 'That session has nothing to claim — either the sign-in was never '
@@ -448,12 +449,20 @@ Open this link and sign in to your bank:
   let completed: { publicToken: string; institutionId: string | null } | null = null;
   while (now() < deadline) {
     await sleep(LINK_POLL_MS);
+    let polled;
     try {
-      completed = await pollLinkSession(credentials, session.linkToken, fetcher);
+      polled = await pollLinkSession(credentials, session.linkToken, fetcher);
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-    if (completed) break;
+    if (polled && 'exited' in polled) {
+      return {
+        ok: false,
+        message: `Link was closed before a bank was connected${polled.reason ? `: ${polled.reason}` : '.'}`
+          + '\n  Nothing was created. Run it again whenever you are ready.',
+      };
+    }
+    if (polled) { completed = polled; break; }
   }
 
   if (!completed) {

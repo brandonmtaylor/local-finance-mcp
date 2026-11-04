@@ -4,7 +4,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { preflight, previewCsv, csvAccountToml, slugify } from '../src/core/setup.js';
+import { preflight, previewCsv, csvAccountToml, slugify, enablePlaidToml } from '../src/core/setup.js';
+import { readCliKeys } from '../src/providers/plaid/cliStore.js';
 import { parse as parseToml } from 'smol-toml';
 import { readFileSync } from 'node:fs';
 import { ConfigSchema } from '../src/core/config.js';
@@ -205,5 +206,58 @@ describe('what setup produces actually works', () => {
     expect(getSpendingSummary(db, '2026-07-01', '2026-07-31', undefined, 'never').spendingCents)
       .toBe(8_432);
     db.close();
+  });
+});
+
+describe('enablePlaidToml', () => {
+  it('turns Plaid on in the starter config, for the environment chosen', async () => {
+    // Setup used to print `finance link` as the next step without this, and
+    // link refused: Plaid was off, and sandbox cannot reach a real bank.
+    const { EXAMPLE_CONFIG } = await import('../src/core/exampleConfig.js');
+    const out = enablePlaidToml(EXAMPLE_CONFIG, 'production');
+    const config = ConfigSchema.parse(parseToml(out));
+    expect(config.providers.plaid.enabled).toBe(true);
+    expect(config.providers.plaid.environment).toBe('production');
+    // Nothing else in the user's file moves.
+    expect(out.replace(/enabled = true\nenvironment = "production"/, ''))
+      .toBe(EXAMPLE_CONFIG.replace(/enabled = false\nenvironment = "sandbox"/, ''));
+  });
+
+  it('keeps comments, and leaves other tables\' "enabled" alone', () => {
+    const toml = '[providers.csv]\nenabled = true\n\n[providers.plaid]\nenabled = false   # off for now\n\n[report]\nai = false\n';
+    const out = enablePlaidToml(toml, 'sandbox');
+    expect(out).toContain('[providers.csv]\nenabled = true');
+    expect(out).toContain('[providers.plaid]\nenvironment = "sandbox"\nenabled = true   # off for now');
+    expect(ConfigSchema.parse(parseToml(out)).report.ai).toBe(false);
+  });
+
+  it('adds the table when the config has none', () => {
+    const out = enablePlaidToml('timezone = "UTC"\n', 'sandbox');
+    const config = ConfigSchema.parse(parseToml(out));
+    expect(config.providers.plaid.enabled).toBe(true);
+    expect(config.providers.plaid.environment).toBe('sandbox');
+  });
+});
+
+describe('readCliKeys', () => {
+  const write = (body: unknown) => {
+    const p = join(dir, 'config.json');
+    writeFileSync(p, JSON.stringify(body));
+    return p;
+  };
+
+  it('returns the shared client_id with the secret for that environment only', () => {
+    const p = write({
+      client_id: 'cid', env: 'production',
+      environments: { sandbox: { secret: 'sb' }, production: { secret: 'prod', items: [] } },
+    });
+    expect(readCliKeys('production', p)).toEqual({ clientId: 'cid', secret: 'prod' });
+    expect(readCliKeys('sandbox', p)).toEqual({ clientId: 'cid', secret: 'sb' });
+  });
+
+  it('is null, not an error, before `plaid login` has run', () => {
+    expect(readCliKeys('production', join(dir, 'missing.json'))).toBeNull();
+    expect(readCliKeys('production', write({ client_id: 'cid', environments: { sandbox: { secret: 'sb' } } }))).toBeNull();
+    expect(readCliKeys('production', write('not an object'))).toBeNull();
   });
 });

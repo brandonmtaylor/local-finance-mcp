@@ -14,9 +14,8 @@
 import { execFileSync as execFileSyncUntimed, type ExecFileSyncOptions } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
-import { createHash } from 'node:crypto';
-import { financeHome } from './paths.js';
+import { join, dirname } from 'node:path';
+import { financeHome, customHome, homeSuffix } from './paths.js';
 
 // The scheduler's job label, deliberately unchanged by the rename. A new
 // label would install a SECOND agent beside the one already running — two
@@ -25,33 +24,14 @@ import { financeHome } from './paths.js';
 const LABEL = 'com.finance-mcp.sync';
 const TASK = 'finance-mcp-sync';
 
-/**
- * The data directory a job belongs to, when it is not the default one.
- *
- * One fixed job name meant a `schedule install` under FINANCE_HOME — a test
- * profile, a second household — silently replaced the real daily job, and
- * `schedule status` in the test profile reported the real one as its own. The
- * default directory keeps the bare name, so an existing install is still
- * recognised; any other gets a suffix derived from its path.
- */
-function customHome(env: NodeJS.ProcessEnv = process.env): string | null {
-  const home = resolve(financeHome(env));
-  return home === resolve(financeHome({ ...env, FINANCE_HOME: '' })) ? null : home;
-}
-
-const suffix = (env: NodeJS.ProcessEnv = process.env): string => {
-  const home = customHome(env);
-  return home ? `-${createHash('sha256').update(home).digest('hex').slice(0, 8)}` : '';
-};
-
 /** launchd label for this data directory. */
 export function jobLabel(env: NodeJS.ProcessEnv = process.env): string {
-  return `${LABEL}${suffix(env)}`;
+  return `${LABEL}${homeSuffix(env)}`;
 }
 
 /** systemd unit / Task Scheduler name for this data directory. */
 export function taskName(env: NodeJS.ProcessEnv = process.env): string {
-  return `${TASK}${suffix(env)}`;
+  return `${TASK}${homeSuffix(env)}`;
 }
 
 export interface ScheduleSpec {

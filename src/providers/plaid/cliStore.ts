@@ -127,3 +127,28 @@ export function listCliItems(environment: string, path = cliConfigPath()): CliIt
   const config = readCliConfig(path);
   return config.environments?.[environment]?.items ?? [];
 }
+
+/**
+ * The API keys `plaid login` saved, for one environment, or null.
+ *
+ * `finance setup` copies these into the OS keystore so nobody has to find them
+ * in a dashboard and paste them. One client_id serves every environment; the
+ * secret is per environment, so a sandbox secret is never handed back for
+ * production. Never throws: a missing or unfamiliar file just means "not
+ * signed in yet".
+ */
+export function readCliKeys(
+  environment: string,
+  path = cliConfigPath(),
+): { clientId: string; secret: string } | null {
+  try {
+    const config = readCliConfig(path);
+    const clientId = config.client_id;
+    const secret = config.environments?.[environment]?.secret;
+    return typeof clientId === 'string' && clientId && typeof secret === 'string' && secret
+      ? { clientId, secret }
+      : null;
+  } catch {
+    return null;
+  }
+}

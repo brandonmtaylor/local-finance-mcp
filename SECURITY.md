@@ -26,7 +26,7 @@ release, and the advisory is published once one is available.
 ## What is not
 
 These are documented limits rather than bugs — see
-[Credentials](README.md#credentials):
+[Credentials](docs/privacy.md#credentials):
 
 - Plaid **access tokens** are stored by the Plaid CLI in a plain JSON file
   (mode 0600), not in the keystore. That is the Plaid CLI's storage, not this

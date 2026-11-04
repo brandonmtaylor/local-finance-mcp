@@ -123,6 +123,40 @@ describe('pollLinkSession', () => {
     expect(await pollLinkSession(credentials, 'lt', fetcher))
       .toEqual({ publicToken: 'pt-1', institutionId: 'ins_9' });
   });
+
+  // Shaped from a real session the person closed: `exit` set, nothing added.
+  // Closing Link used to leave the wizard waiting out twenty minutes.
+  const exited = {
+    exit: { error: null, metadata: { institution: {} } },
+    finished_at: '2026-11-04T03:53:40Z',
+    results: { item_add_results: [], bank_income_results: [] },
+  };
+
+  it('reports an exit, so the wait can stop', async () => {
+    const { fetcher } = stubFetch([{ body: { link_sessions: [exited] } }]);
+    expect(await pollLinkSession(credentials, 'lt', fetcher)).toEqual({ exited: true, reason: null });
+  });
+
+  it('passes on the bank\'s reason when the exit carries an error', async () => {
+    const { fetcher } = stubFetch([{ body: { link_sessions: [{
+      ...exited, exit: { error: { display_message: 'The bank is not responding.' } },
+    }] } }]);
+    expect(await pollLinkSession(credentials, 'lt', fetcher))
+      .toEqual({ exited: true, reason: 'The bank is not responding.' });
+  });
+
+  it('keeps waiting while a reopened session is still signing in', async () => {
+    const { fetcher } = stubFetch([{ body: { link_sessions: [exited, { results: {} }] } }]);
+    expect(await pollLinkSession(credentials, 'lt', fetcher)).toBeNull();
+  });
+
+  it('prefers a connected bank over an earlier exit', async () => {
+    const { fetcher } = stubFetch([{ body: { link_sessions: [exited, {
+      exit: null, results: { item_add_results: [{ public_token: 'pt-2' }] },
+    }] } }]);
+    expect(await pollLinkSession(credentials, 'lt', fetcher))
+      .toEqual({ publicToken: 'pt-2', institutionId: null });
+  });
 });
 
 describe('exchangePublicToken', () => {

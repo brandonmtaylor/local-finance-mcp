@@ -3,43 +3,22 @@
 From bank to answered question. Nothing here is magic; the whole point is that
 every step is inspectable and runs on your machine.
 
-```
-  ┌── ACQUIRE ─────────────────────────────────────────────────────────┐
-  │                                                                    │
-  │  CSV (manual)                    Plaid (automatic)                 │
-  │  you download an export          plaid CLI, cursor-based           │
-  │  → drop in a watched folder      → credentials from OS keystore    │
-  │            │                              │                        │
-  └────────────┼──────────────────────────────┼────────────────────────┘
-               │                              │
-               ▼                              ▼
-  ┌── NORMALIZE (provider adapter) ────────────────────────────────────┐
-  │  • one canonical row shape, whatever the source                    │
-  │  • integer cents; positive = money IN  (Plaid is negated here)     │
-  │  • stable txn id  (Plaid: theirs · CSV: content hash + occurrence) │
-  │  • category: merchant patterns → bank's own label → "other"        │
-  │  • spend_group derived from category                               │
-  └────────────────────────────┬───────────────────────────────────────┘
-                               ▼
-  ┌── WRITE (sync engine) ─────────────────────────────────────────────┐
-  │  advisory lock  →  one SQL transaction  →  upsert by txn id        │
-  │  never touches annotations — the user's corrections                │
-  └────────────────────────────┬───────────────────────────────────────┘
-                               ▼
-                    ╔══════════════════════╗
-                    ║      ledger.db       ║   accounts · transactions
-                    ║   (SQLite, on disk)  ║   balances · providers · sync_log
-                    ╚══════════╤═══════════╝
-                               │
-            ┌──────────────────┴───────────────────┐
-            ▼                                      ▼
-  ┌── CLI (no model) ─────────┐      ┌── MCP server (stdio) ───────────┐
-  │  finance summary          │      │  Claude calls a tool            │
-  │  finance query            │      │    ↓                            │
-  │  finance categorize       │      │  freshness check → maybe sync   │
-  │                           │      │    ↓                            │
-  │  stays on your machine    │      │  results returned to the model  │
-  └───────────────────────────┘      └─────────────────────────────────┘
+```mermaid
+flowchart TD
+  subgraph acquire["1 · Acquire"]
+    csv["CSV export<br/>you download it into a watched folder"]
+    plaid["Plaid CLI<br/>cursor-based · keys from the OS keystore"]
+  end
+  n["<b>2 · Normalize</b> (provider adapter)<br/>one row shape · integer cents · positive = money in<br/>content-derived txn id + occurrence index<br/>category: merchant patterns → bank's label → other"]
+  w["<b>3 · Write</b> (sync engine)<br/>advisory lock → one SQL transaction → upsert by txn id<br/>never touches annotations"]
+  csv --> n
+  plaid --> n
+  n --> w
+  w --> db[("4 · ledger.db (SQLite, WAL)<br/>accounts · connections · sources<br/>transactions · annotations · balances")]
+  db --> cli["5 · CLI — no model, no network<br/>summary · report · insights · afford"]
+  db <--> mcp["5 · MCP server (stdio)<br/>freshness check → maybe sync"]
+  mcp <--> model["the model sees tool results only"]
+  sched["7 · OS scheduler<br/>LaunchAgent · systemd · Task Scheduler"] --> cli
 ```
 
 ---
@@ -118,7 +97,7 @@ WAL mode, so a background sync can write while a query reads.
 **The CLI** answers from the ledger with no model involved and no network. This
 is the fully private path — `finance summary` never leaves your machine.
 
-**The MCP server** exposes seven tools to Claude. Whatever a tool returns goes
+**The MCP server** exposes 24 tools to Claude (see [Asking Claude](mcp.md)). Whatever a tool returns goes
 into the conversation, and therefore to the model. Credentials and full account
 numbers never do; transaction descriptions and amounts do, because an AI cannot
 analyze what it cannot see.
@@ -179,3 +158,11 @@ worthless.
 | MCP tool call | ledger stays local | the tool's result |
 | Credentials | ✓ OS keystore, always | never |
 | Full account numbers | never stored at all (last 4 only) | never |
+
+## Conventions
+
+- **Money is integer cents.** Floats are never used for currency.
+- **Signed amounts: positive is money IN, negative is money OUT.** Providers normalize to this.
+- **Corrections are user-owned** and survive re-syncs and re-links. They are stored apart from
+  the provider's data and applied in the `visible_transactions` view, whose `category` column is
+  already the corrected value — so a correction applies everywhere at once.

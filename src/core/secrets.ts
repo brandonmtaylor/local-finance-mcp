@@ -13,6 +13,7 @@
 
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
 import { platform } from 'node:os';
+import { homeSuffix } from './paths.js';
 
 export type SecretsBackend = 'keychain' | 'secret-service' | 'dpapi' | 'env';
 
@@ -32,8 +33,14 @@ export function defaultBackend(): SecretsBackend {
   }
 }
 
-function serviceName(providerId: string): string {
-  return `${SERVICE_PREFIX}.${providerId}`;
+// Per data directory, like the scheduled job: the keystore is shared by every
+// FINANCE_HOME, so without this a test profile's keys replace the real ones.
+// The default directory keeps the bare prefix, so stored keys are still found.
+const prefix = (env: NodeJS.ProcessEnv = process.env) => `${SERVICE_PREFIX}${homeSuffix(env)}`;
+
+/** The keystore service a provider's secrets are stored under, for this data directory. */
+export function serviceName(providerId: string, env: NodeJS.ProcessEnv = process.env): string {
+  return `${prefix(env)}.${providerId}`;
 }
 
 /**
@@ -146,7 +153,7 @@ const dpapiStore: SecretsStore = {
   backend: 'dpapi',
   get(providerId, key) {
     const script = `
-      $p = Join-Path $env:APPDATA '${SERVICE_PREFIX}\\secrets\\${providerId}.${key}.dat'
+      $p = Join-Path $env:APPDATA '${prefix()}\\secrets\\${providerId}.${key}.dat'
       if (!(Test-Path $p)) { exit 1 }
       $sec = Get-Content $p | ConvertTo-SecureString
       [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -157,7 +164,7 @@ const dpapiStore: SecretsStore = {
   },
   set(providerId, key, value) {
     const script = `
-      $dir = Join-Path $env:APPDATA '${SERVICE_PREFIX}\\secrets'
+      $dir = Join-Path $env:APPDATA '${prefix()}\\secrets'
       New-Item -ItemType Directory -Force -Path $dir | Out-Null
       $p = Join-Path $dir '${providerId}.${key}.dat'
       $input | ConvertTo-SecureString -AsPlainText -Force | ConvertFrom-SecureString | Set-Content $p`;
@@ -168,7 +175,7 @@ const dpapiStore: SecretsStore = {
   },
   delete(providerId, key) {
     const script = `
-      $p = Join-Path $env:APPDATA '${SERVICE_PREFIX}\\secrets\\${providerId}.${key}.dat'
+      $p = Join-Path $env:APPDATA '${prefix()}\\secrets\\${providerId}.${key}.dat'
       if (Test-Path $p) { Remove-Item $p -Force }`;
     runKeystore('powershell', ['-NoProfile', '-Command', script]);
   },

@@ -6,7 +6,9 @@ import { Command } from 'commander';
 import { existsSync, writeFileSync, mkdirSync, statSync, appendFileSync, readFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline/promises';
+import { createInterface, type Interface } from 'node:readline/promises';
+import { Writable } from 'node:stream';
+import { bold, dim, green, red, yellow, cyan, step, links } from './style.js';
 import { loadConfig, defaultConfig } from './core/config.js';
 import { CATEGORIES, isCategory, type Category } from './core/normalize.js';
 import { configPath, financeHome, ledgerPath, providerStateDir, expandPath } from './core/paths.js';
@@ -21,7 +23,7 @@ import { computeBaseline, applyScenario, maxAffordable, principalFromPayment, mo
 import { narrate } from './core/narrate.js';
 import { deliver, headline, openInBrowser } from './core/deliver.js';
 import { join, dirname } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   openLedger, setCategoryOverride, setNote, addTag, removeTag, normalizeTag,
   setConnectionActive,
@@ -54,13 +56,13 @@ import { detectVests, monthlyNetEquity } from './core/equity.js';
  * wide window costs nothing extra.
  */
 const DEFAULT_MOVEMENT_START = '2020-01-01';
-import { readCliConfig } from './providers/plaid/cliStore.js';
+import { readCliConfig, readCliKeys } from './providers/plaid/cliStore.js';
 import {
   installSchedule, uninstallSchedule, scheduleStatus, parseTime,
 } from './core/schedule.js';
 import { EXAMPLE_CONFIG } from './core/exampleConfig.js';
 import { VERSION } from './core/version.js';
-import { preflight, previewCsv, csvAccountToml, slugify } from './core/setup.js';
+import { preflight, previewCsv, csvAccountToml, slugify, enablePlaidToml } from './core/setup.js';
 
 const program = new Command();
 program
@@ -102,7 +104,7 @@ program
     const providers = buildProviders(config, {
       onCsvIssues: (issues) => {
         // Never silently drop rows — a skipped transaction is a wrong report.
-        console.warn(`\n${issues.length} row(s) skipped:`);
+        console.warn(yellow(`\n${issues.length} row(s) skipped:`));
         for (const issue of issues.slice(0, 20)) {
           console.warn(`  ${issue.file}:${issue.line} — ${issue.message}`);
         }
@@ -111,7 +113,7 @@ program
     });
 
     if (providers.length === 0) {
-      console.error('No providers configured. Run `finance doctor` to see what is missing.');
+      console.error(red('No providers configured. Run `finance doctor` to see what is missing.'));
       process.exitCode = 1;
       return;
     }
@@ -128,17 +130,17 @@ program
     }
     for (const o of outcomes) {
       if (o.error) {
-        console.error(`✗ ${o.providerId}: ${o.error}`);
+        console.error(`${red('✗')} ${o.providerId}: ${red(o.error)}`);
         process.exitCode = 1;
       } else {
-        console.log(`✓ ${o.providerId}: +${o.added} added, ${o.modified} modified, ${o.removed} removed`);
+        console.log(`${green('✓')} ${o.providerId}: +${o.added} added, ${o.modified} modified, ${o.removed} removed`);
       }
       // Printed for a successful sync too. A dead connection does not fail the
       // run — the healthy ones still wrote their data — but it produces "+0
       // added" indefinitely, which reads as a quiet week rather than a bank
       // that stopped answering. Exit non-zero so a scheduler notices as well.
       for (const issue of o.issues ?? []) {
-        console.error(`  ! ${issue}`);
+        console.error(yellow(`  ! ${issue}`));
         process.exitCode = 1;
       }
     }
@@ -175,26 +177,37 @@ program
     + 'Without this, providers use their default — commonly 90 days — and the limit is '
     + 'permanent for that connection.')
   .option('--no-history', 'Skip the history backfill')
-  .action(async (opts: {
-    provider?: string; history?: string | false; days?: string; open?: boolean;
-    products?: string; resume?: boolean;
-  }) => {
-    const config = loadConfig();
-    const db = openLedger();
+  .action(async (opts: LinkOptions) => {
+    if (!await linkAccount(opts)) process.exitCode = 1;
+  });
 
+interface LinkOptions {
+  provider?: string; history?: string | false; days?: string; open?: boolean;
+  products?: string; resume?: boolean;
+}
+
+/**
+ * Link one connection and load its history. Shared by `finance link` and
+ * `finance setup`, which used to print this as a command to run next — and the
+ * printed steps did not work on a fresh config. Returns false on failure, having
+ * already said why.
+ */
+async function linkAccount(opts: LinkOptions): Promise<boolean> {
+  const config = loadConfig();
+  const db = openLedger();
+  try {
     let daysRequested: number | undefined;
     if (opts.days !== undefined) {
       daysRequested = Number(opts.days);
       if (!Number.isInteger(daysRequested) || daysRequested < 1 || daysRequested > 730) {
         console.error(`--days must be a whole number between 1 and 730, got "${opts.days}".`);
-        process.exitCode = 1;
-        return;
+        return false;
       }
     }
 
     const linkable = buildProviders(config, {
       daysRequested,
-      onProgress: (m) => console.log(m),
+      onProgress: (m) => console.log(links(m)),
       // Off unless asked. A tool that launches windows on your machine has to
       // earn that, and the URL is printed either way — the convenience is not
       // worth wondering what opened something.
@@ -211,8 +224,7 @@ program
       console.error(linkable.length === 0
         ? 'No provider supports linking. Enable one (e.g. plaid) in the config first.'
         : `Unknown provider "${opts.provider}". Available: ${linkable.map((p) => p.id).join(', ')}`);
-      process.exitCode = 1;
-      return;
+      return false;
     }
 
     console.log(`Opening ${provider.id} link flow — complete it in your browser…\n`);
@@ -225,8 +237,7 @@ program
 
     console.log(result.message);
     if (!result.ok) {
-      process.exitCode = 1;
-      return;
+      return false;
     }
 
     // An investments-only link has no transactions to backfill — many
@@ -238,8 +249,7 @@ program
       console.log('\nLinked. This connection has no transactions product, so there is no');
       console.log('history to load. Inspect what it does provide with:');
       console.log('  finance connections probe <connection_id>');
-      db.close();
-      return;
+      return true;
     }
 
     // A fresh link with no history is a ledger that can answer nothing about the
@@ -247,15 +257,13 @@ program
     // cannot reach backwards, so this is a date-range fetch.
     if (opts.history === false || !provider.backfill) {
       console.log('\nRun `finance sync` to pull transactions.');
-      db.close();
-      return;
+      return true;
     }
 
     const months = Number(opts.history);
     if (!Number.isFinite(months) || months <= 0) {
       console.error(`--history must be a positive number of months, got "${opts.history}"`);
-      process.exitCode = 1;
-      return;
+      return false;
     }
     const until = new Date();
     const since = new Date(until);
@@ -290,11 +298,11 @@ program
     if (outcome.error) {
       // The link itself succeeded, so say so — otherwise it reads as a total
       // failure and the user re-links an account that is already connected.
-      console.error(`✗ history load failed: ${outcome.error}`);
+      console.error(`${red('✗')} history load failed: ${red(outcome.error)}`);
       console.error('  The account IS linked. Retry with `finance backfill --since <date>`.');
-      process.exitCode = 1;
+      return false;
     } else {
-      console.log(`✓ ${outcome.added} transaction(s) loaded.`);
+      console.log(`${green('✓')} ${outcome.added} transaction(s) loaded.`);
       reportCoverage(outcome.coverage, ymd(since), months);
 
       // The moment to say this is now, while they still have the context.
@@ -313,8 +321,11 @@ program
         console.log('\n' + '─'.repeat(64));
       }
     }
+    return true;
+  } finally {
     db.close();
-  });
+  }
+}
 
 /**
  * Say what history actually arrived, and how far short of the request it fell.
@@ -382,10 +393,10 @@ program
     }
     for (const o of outcomes) {
       if (o.error) {
-        console.error(`✗ ${o.providerId}: ${o.error}`);
+        console.error(`${red('✗')} ${o.providerId}: ${red(o.error)}`);
         process.exitCode = 1;
       } else {
-        console.log(`✓ ${o.providerId}: ${o.added} transaction(s) written`);
+        console.log(`${green('✓')} ${o.providerId}: ${o.added} transaction(s) written`);
         const months = Math.max(1, Math.round(
           (Date.parse(until) - Date.parse(opts.since)) / (86_400_000 * 30),
         ));
@@ -454,8 +465,8 @@ program
       : resolveRange((opts.range ?? 'last-30-days') as never, new Date(), db);
     const s = getSpendingSummary(db, r.start, r.end);
 
-    console.log(`\nSpending ${s.startDate} → ${s.endDate}`);
-    console.log(`  Total: ${money(s.spendingCents, s.currency)} across ${s.transactionCount} transactions`);
+    console.log(`\n${bold(`Spending ${s.startDate} → ${s.endDate}`)}`);
+    console.log(`  Total: ${bold(money(s.spendingCents, s.currency))} across ${s.transactionCount} transactions`);
     if (s.cardPaymentsCounted) {
       // Say so, or linking a card later looks like the total dropped for no reason.
       // "No card is linked" is often false. The card IS linked and simply has
@@ -480,9 +491,9 @@ program
     if (cadence && Math.abs(cadence.observed - cadence.expected) >= 0.5) {
       const short = cadence.observed < cadence.expected;
       console.log('');
-      console.log(`  ! this window holds ${cadence.observed} pay deposit(s); a ${
+      console.log(yellow(`  ! this window holds ${cadence.observed} pay deposit(s); a ${
         Math.round((Date.parse(s.endDate) - Date.parse(s.startDate)) / 86_400_000) + 1
-      }-day window ${cadence.daysOfMonth ? 'holds' : 'usually holds'} ${cadence.expected}`);
+      }-day window ${cadence.daysOfMonth ? 'holds' : 'usually holds'} ${cadence.expected}`));
       const ordinal = (d: number) => (d === 31 ? 'last day'
         : `${d}${d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th'}`);
       console.log(cadence.daysOfMonth
@@ -494,7 +505,7 @@ program
 
     if (s.dataEnds) {
       console.log('');
-      console.log(`  ! ${dataEndsMessage(s.dataEnds)}`);
+      console.log(yellow(`  ! ${dataEndsMessage(s.dataEnds)}`));
     }
 
     // The caveat goes with the number, every time it is shown. A total that
@@ -502,7 +513,7 @@ program
     // reading it beside a later one measures coverage, not behaviour.
     if (s.coverageGaps.length > 0) {
       console.log('');
-      console.log(`  ! ${s.coverageGaps.length} account(s) hold no data for part of this window:`);
+      console.log(yellow(`  ! ${s.coverageGaps.length} account(s) hold no data for part of this window:`));
       for (const g of s.coverageGaps) {
         console.log(`      ${g.name}${g.mask ? ` ••${g.mask}` : ''} — starts ${g.earliest},`
           + ` missing the first ${g.missingDays} day(s)`);
@@ -519,7 +530,7 @@ program
     if (s.incomeCents) console.log(`\n  Income: ${money(s.incomeCents, s.currency)}`);
     // Shown but never folded into the total — see getSpendingSummary.
     if (s.excluded.paymentsCents || s.excluded.transfersCents) {
-      console.log('\n  Excluded from spending (internal movement, not new spend):');
+      console.log(`\n  ${bold('Excluded from spending')} ${dim('(internal movement, not new spend)')}`);
       console.log(`    credit-card payments ${money(s.excluded.paymentsCents, s.currency)}`);
       console.log(`    transfers          ${money(s.excluded.transfersCents, s.currency)}`);
     }
@@ -558,13 +569,13 @@ program
     }
 
     const pct = (v: number | null) => (v === null ? 'new' : `${v > 0 ? '+' : ''}${v}%`);
-    console.log(`\nInsights ${brief.period.start} → ${brief.period.end}`);
+    console.log(`\n${bold(`Insights ${brief.period.start} → ${brief.period.end}`)}`);
     console.log(`  Spending ${money(brief.spendingCents)}`
       + (brief.priorPeriodComparable
         ? ` (${pct(brief.spendingChangePct)} vs prior ${brief.priorPeriod.start} → ${brief.priorPeriod.end})`
         : ''));
     console.log(`  Income   ${money(brief.incomeCents)}   Net ${money(brief.netCents)}`);
-    if (ends) console.log(`  ! ${dataEndsMessage(ends)}`);
+    if (ends) console.log(yellow(`  ! ${dataEndsMessage(ends)}`));
     if (!brief.priorPeriodComparable) {
       // Saying nothing would imply the comparison was made and found nothing.
       console.log(ends ? '  (no comparison — this window is not covered to its end)'
@@ -572,7 +583,7 @@ program
     }
 
     if (brief.concentration.length) {
-      console.log('\n  Where it concentrates');
+      console.log(`\n  ${bold('Where it concentrates')}`);
       for (const c of brief.concentration) {
         console.log(`    ${c.category.padEnd(22)} ${money(c.cents).padStart(12)}  ${String(c.pctOfTotal).padStart(3)}% of spending`);
       }
@@ -580,14 +591,14 @@ program
 
     const movers = brief.trends.filter((t) => Math.abs(t.changeCents) >= 10_000).slice(0, 6);
     if (movers.length) {
-      console.log('\n  Biggest changes vs prior period');
+      console.log(`\n  ${bold('Biggest changes vs prior period')}`);
       for (const t of movers) {
         console.log(`    ${t.category.padEnd(22)} ${money(t.changeCents).padStart(12)}  (${pct(t.changePct)})`);
       }
     }
 
     if (brief.recurring.length) {
-      console.log('\n  Recurring');
+      console.log(`\n  ${bold('Recurring')}`);
       for (const r of brief.recurring.slice(0, 8)) {
         // A 0-day cadence means several charges land on the same day — a
         // repeated donation, not a subscription. Say which.
@@ -597,14 +608,14 @@ program
     }
 
     if (brief.unusual.length) {
-      console.log('\n  Unusual for their category');
+      console.log(`\n  ${bold('Unusual for their category')}`);
       for (const u of brief.unusual) {
         console.log(`    ${u.date}  ${money(u.amountCents).padStart(11)}  ${u.description.slice(0, 34).padEnd(36)} ${u.multiple.toFixed(1)}× typical ${u.category}`);
       }
     }
 
     if (brief.newMerchants.length) {
-      console.log('\n  First seen this period');
+      console.log(`\n  ${bold('First seen this period')}`);
       for (const m of brief.newMerchants.slice(0, 6)) {
         console.log(`    ${m.merchant.slice(0, 34).padEnd(36)} ${money(m.totalCents).padStart(11)}  (${m.count})`);
       }
@@ -788,7 +799,7 @@ program
     const target = join(financeHome(), 'reports', `report-${start}_${end}.html`);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, renderReport(panels, narration));
-    console.log(`✓ report ${target}` + (panels.length > 1 ? ` (${panels.length} ranges)` : ''));
+    console.log(`${green('✓')} report ${target}` + (panels.length > 1 ? ` (${panels.length} ranges)` : ''));
 
     const summary = {
       spendingCents: data.summary.spendingCents,
@@ -1010,9 +1021,7 @@ secrets
   .action(async (providerId: string, key: string) => {
     // Prompted rather than taken as an argument so the value never lands in
     // shell history or the process table.
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    const value = await rl.question(`Value for ${providerId}.${key} (input is not echoed to stdout): `);
-    rl.close();
+    const value = await askHidden(`Value for ${providerId}.${key} (input is hidden): `);
     if (!value.trim()) {
       console.error('Empty value — nothing stored.');
       process.exitCode = 1;
@@ -1029,25 +1038,53 @@ secrets
   });
 
 /**
+ * Prompt without echoing what is typed. The prompt used to promise "not echoed
+ * to stdout" while readline echoed every keystroke to the terminal — so an app
+ * password sat on screen, and in any scrollback or screen share.
+ */
+async function askHidden(prompt: string): Promise<string> {
+  let muted = false;
+  const output = new Writable({
+    write(chunk, encoding, done) {
+      if (!muted) process.stderr.write(chunk, encoding);
+      done();
+    },
+  });
+  const rl = createInterface({ input: process.stdin, output, terminal: process.stdin.isTTY === true });
+  try {
+    const answer = rl.question(prompt);
+    muted = true; // the prompt is written synchronously; everything after is typing
+    return await answer;
+  } finally {
+    rl.close();
+    process.stderr.write('\n');
+  }
+}
+
+/**
  * Probe stored Plaid credentials, reporting what they actually unlock.
  *
  * Never fails the command. The credential IS stored by this point, and a
  * network blip is not a reason to imply otherwise — the check adds
  * information, it does not gate anything.
  */
-async function verifyPlaidCredentials(): Promise<void> {
+async function verifyPlaidCredentials(
+  forEnvironment?: 'sandbox' | 'production',
+): Promise<boolean> {
   const clientId = readSecret('plaid', 'client_id');
   const secret = readSecret('plaid', 'secret');
   if (!clientId || !secret) {
     console.log('  (both client_id and secret are needed before this can be checked)');
-    return;
+    return false;
   }
 
-  let environment: 'sandbox' | 'production' = 'sandbox';
-  try {
-    environment = loadConfig().providers.plaid.environment;
-  } catch {
-    // No config yet is fine — `finance secret set` legitimately runs first.
+  let environment: 'sandbox' | 'production' = forEnvironment ?? 'sandbox';
+  if (!forEnvironment) {
+    try {
+      environment = loadConfig().providers.plaid.environment;
+    } catch {
+      // No config yet is fine — `finance secret set` legitimately runs first.
+    }
   }
 
   process.stdout.write(`  checking against ${environment}… `);
@@ -1055,7 +1092,7 @@ async function verifyPlaidCredentials(): Promise<void> {
     const result = await verifyCredentials({ clientId, secret, environment });
     if (result.ok) {
       console.log('works.');
-      return;
+      return true;
     }
     console.log('failed.');
     if (result.wrongEnvironment) {
@@ -1067,10 +1104,12 @@ async function verifyPlaidCredentials(): Promise<void> {
       console.error(`\n  ${result.reason}`);
       console.error('  The value is stored; correct it with `finance secret set` and re-run.');
     }
+    return false;
   } catch (err) {
     console.log('could not check.');
     console.error(`  ${(err as Error).message}`);
     console.error('  The value is stored — this check needs network access.');
+    return false;
   }
 }
 
@@ -1101,26 +1140,29 @@ schedule
   .description('Install the scheduled job (reads [report] in the config)')
   .option('--daily <time>', 'HH:MM, 24-hour local time', '07:00')
   .option('--sync-only', 'Only sync — do not build or deliver a report')
-  .action((opts: { daily: string; syncOnly?: boolean }) => {
-    const config = loadConfig();
-    const spec = parseTime(opts.daily);
-    // Absolute paths: launchd and systemd do not inherit the shell PATH, and a
-    // bare "node" is the most common reason a schedule silently never runs.
-    const status = installSchedule(spec, {
-      nodePath: realpathSync(process.execPath),
-      cliPath: fileURLToPath(import.meta.url),
-    }, opts.syncOnly ? ['sync', '--automatic-only'] : ['run']);
+  .action((opts: { daily: string; syncOnly?: boolean }) => installDaily(opts.daily, opts.syncOnly === true));
 
-    console.log(`Installed at ${opts.daily} (${status.platform}): ${opts.syncOnly ? 'sync only' : 'sync + report + deliver'}`);
-    if (status.path) console.log(`  ${status.path}`);
-    if (!opts.syncOnly) {
-      console.log(`  range: ${config.report.range} · deliver: ${config.report.deliver.join(', ') || 'save only'}`
-        + `${config.report.ai ? ' · with AI analysis' : ''}`);
-      if (config.report.deliver.includes('email') && !config.report.emailTo) {
-        console.warn('  ! deliver includes "email" but report.emailTo is not set');
-      }
+/** Install the daily job. Shared by `schedule install` and `finance setup`. */
+function installDaily(daily: string, syncOnly: boolean): void {
+  const config = loadConfig();
+  const spec = parseTime(daily);
+  // Absolute paths: launchd and systemd do not inherit the shell PATH, and a
+  // bare "node" is the most common reason a schedule silently never runs.
+  const status = installSchedule(spec, {
+    nodePath: realpathSync(process.execPath),
+    cliPath: fileURLToPath(import.meta.url),
+  }, syncOnly ? ['sync', '--automatic-only'] : ['run']);
+
+  console.log(`Installed at ${daily} (${status.platform}): ${syncOnly ? 'sync only' : 'sync + report + deliver'}`);
+  if (status.path) console.log(`  ${status.path}`);
+  if (!syncOnly) {
+    console.log(`  range: ${config.report.range} · deliver: ${config.report.deliver.join(', ') || 'save only'}`
+      + `${config.report.ai ? ' · with AI analysis' : ''}`);
+    if (config.report.deliver.includes('email') && !config.report.emailTo) {
+      console.warn('  ! deliver includes "email" but report.emailTo is not set');
     }
-  });
+  }
+}
 
 schedule
   .command('status')
@@ -1128,8 +1170,8 @@ schedule
   .action(() => {
     const status = scheduleStatus();
     console.log(status.installed
-      ? `Installed${status.detail ? ` — ${status.detail}` : ''}${status.path ? `\n  ${status.path}` : ''}`
-      : 'Not installed. Run `finance schedule install`.');
+      ? `${green('✓ Installed')}${status.detail ? ` — ${status.detail}` : ''}${status.path ? dim(`\n  ${status.path}`) : ''}`
+      : `${yellow('Not installed.')} Run \`finance schedule install\`.`);
   });
 
 schedule
@@ -1172,7 +1214,7 @@ program
 
     const cents = (v?: string) => (v === undefined ? undefined : Math.round(Number(v) * 100));
 
-    console.log(`\nBaseline — ${baseline.monthsCovered} complete month(s): ${baseline.months.join(', ')}`);
+    console.log(`\n${bold(`Baseline — ${baseline.monthsCovered} complete month(s)`)}${dim(`: ${baseline.months.join(', ')}`)}`);
     // Each figure is the MEDIAN month, which is deliberate (see computeBaseline)
     // and invisible unless it is said: a reader who averages the months by hand
     // gets a different number and concludes the tool is wrong.
@@ -1250,7 +1292,11 @@ program
     const netLabel = (cents: number) => (cents < 0
       ? `SHORT ${money(Math.abs(cents))}/mo`
       : `${money(cents)}/mo`);
-    console.log(`  ${(baseline.monthlyNetCents < 0 ? 'Shortfall' : 'Left over').padEnd(18)}${netLabel(baseline.monthlyNetCents).padStart(15)}`);
+    // Coloured AFTER padding: escape codes count toward padStart's width and
+    // would push the column out of line.
+    const netShown = (cents: number, width = 0) =>
+      (cents < 0 ? red : green)(bold(netLabel(cents).padStart(width)));
+    console.log(`  ${(baseline.monthlyNetCents < 0 ? 'Shortfall' : 'Left over').padEnd(18)}${netShown(baseline.monthlyNetCents, 15)}`);
     // Income, spending and net are each the median of a DIFFERENT set of
     // months, so they will not subtract — and a reader who tries is entitled to
     // think one of them is wrong. Say it, but only when the gap is big enough
@@ -1302,12 +1348,12 @@ program
       const result = applyScenario(baseline, {
         label: 'scenario', addCents, replaceLoanCents: replaceCents, annualIncomeCents: annualCents,
       });
-      console.log('\nScenario');
+      console.log(`\n${bold('Scenario')}`);
       if (replaceCents !== undefined) console.log(`  replace loan payments with ${money(replaceCents)}/mo`);
       if (addCents !== undefined) console.log(`  add ${money(addCents)}/mo`);
-      console.log(`  Result            ${netLabel(result.monthlyNetCents)}`);
+      console.log(`  Result            ${netShown(result.monthlyNetCents)}`);
       if (result.monthlyNetCents < 0) {
-        console.log(`  ⚠ you would spend ${money(Math.abs(result.monthlyNetCents))} MORE than you earn, every month`);
+        console.log(red(`  ⚠ you would spend ${money(Math.abs(result.monthlyNetCents))} MORE than you earn, every month`));
       }
 
       // A bonus, vest or refund is not salary. Folding it into one number lets
@@ -1319,7 +1365,7 @@ program
         });
         console.log('');
         console.log(`  Counting only guaranteed income (no ${money(annualCents)}/yr lump):`);
-        console.log(`                    ${netLabel(guaranteed.monthlyNetCents)}`);
+        console.log(`                    ${netShown(guaranteed.monthlyNetCents)}`);
         console.log(`  The lump is worth ${money(monthlyFromAnnual(annualCents))}/mo — and it is not promised.`);
         console.log('  A fixed monthly payment should survive the year that lump does not arrive.');
       }
@@ -1331,21 +1377,21 @@ program
       // Above the number, not below it. A borrowing estimate is the figure
       // someone acts on, and a caveat printed after a six-figure total reads as
       // a footnote to a conclusion already drawn.
-      console.log(`\n  ⚠ Based on ${baseline.monthsCovered} complete month(s) — not enough to size`);
-      console.log('    a mortgage. One unusual month moves the figure below by thousands.');
+      console.log(yellow(`\n  ⚠ Based on ${baseline.monthsCovered} complete month(s) — not enough to size`));
+      console.log(yellow('    a mortgage. One unusual month moves the figure below by thousands.'));
     }
-    console.log(`\nMaximum new payment leaving ${money(buffer)}/mo spare`);
+    console.log(`\n${bold(`Maximum new payment leaving ${money(buffer)}/mo spare`)}`);
     if (max <= 0) {
-      console.log(`  none — you are already SHORT ${money(Math.abs(max))}/mo before adding anything`);
+      console.log(red(`  none — you are already SHORT ${money(Math.abs(max))}/mo before adding anything`));
     } else {
-      console.log(`  ${money(max)}/mo`);
+      console.log(`  ${green(bold(`${money(max)}/mo`))}`);
       const principal = principalFromPayment(max, Number(opts.rate), Number(opts.term));
       console.log(`  ≈ ${money(principal)} borrowed at ${opts.rate}% over ${opts.term} years`);
       console.log('    (principal & interest only — taxes, insurance and HOA are on top)');
     }
 
     if (baseline.warnings.length) {
-      console.log('\nRead with care');
+      console.log(`\n${yellow(bold('Read with care'))}`);
       for (const w of baseline.warnings) console.log(`  · ${w}`);
       if (annualMonthly > 0) {
         console.log('  · the yearly extra is ASSUMED, not measured — enter it after tax, and');
@@ -1374,7 +1420,7 @@ program
       // about implementing a provider and mentions CSV columns nowhere — a
       // dead end for the one person following it.
       console.error(`edit ${configPath()}, which has a commented example of every field.`);
-      console.error('The CSV section of the README explains what each one means.');
+      console.error('docs/csv.md in the project explains what each one means.');
       process.exitCode = 1;
       return;
     }
@@ -1388,23 +1434,30 @@ program
 
     const ask = async (q: string, fallback = '') => {
       if (closed) throw new Error('input closed');
-      const answer = (await rl.question(fallback ? `${q} [${fallback}] ` : `${q} `)).trim();
+      const answer = (await rl.question(`${bold(q)} ${fallback ? `${dim(`[${fallback}]`)} ` : ''}`)).trim();
       return answer || fallback;
     };
-    const yes = async (q: string, fallback: 'y' | 'n' = 'y') => /^y/i.test(await ask(`${q} (y/n)`, fallback));
+    // [Y/n] rather than "(y/n) [y]": the capital is the default, which is the
+    // convention people already read without thinking.
+    const yes = async (q: string, fallback: 'y' | 'n' = 'y') => {
+      const answer = await ask(`${q} ${dim(fallback === 'y' ? '[Y/n]' : '[y/N]')}`);
+      return answer ? /^y/i.test(answer) : fallback === 'y';
+    };
 
     try {
-      console.log('\nChecking this machine…\n');
+      console.log(`\n${bold('finance setup')}  ${dim('— about ten minutes. Ctrl-C stops at any point.')}`);
+      console.log(step(1, 4, 'Check this machine'));
       const checks = preflight({
         home: financeHome(),
         hasPlaidBinary: hasBinary('plaid'),
       });
       for (const c of checks) {
-        console.log(`  ${c.ok ? '\u2713' : (c.blocking ? '\u2717' : '\u00b7')} ${c.name}: ${c.detail}`);
-        if (c.fix) console.log(`      ${c.fix}`);
+        const mark = c.ok ? green('\u2713') : c.blocking ? red('\u2717') : yellow('\u00b7');
+        console.log(`  ${mark} ${c.name}: ${dim(c.detail)}`);
+        if (c.fix) console.log(`      ${yellow(c.fix)}`);
       }
       if (checks.some((c) => !c.ok && c.blocking)) {
-        console.error('\nFix the blocking items above, then run `finance setup` again.');
+        console.error(red('\nFix the blocking items above, then run `finance setup` again.'));
         process.exitCode = 1;
         return;
       }
@@ -1412,16 +1465,16 @@ program
       if (!existsSync(configPath())) {
         mkdirSync(financeHome(), { recursive: true });
         writeFileSync(configPath(), EXAMPLE_CONFIG);
-        console.log(`\n  wrote ${configPath()}`);
+        console.log(dim(`\n  wrote ${configPath()}`));
       }
       openLedger().close();
 
       // CSV first, deliberately. It needs no account, no keys and no third
       // party, so someone can have real numbers on screen inside a minute and
       // decide whether the tool is worth the Plaid setup at all.
-      console.log('\nTwo ways to get data in:');
-      console.log('  1. A CSV export from your bank — works right now, no signup');
-      console.log('  2. Plaid — automatic, but needs an account and API keys\n');
+      console.log(step(2, 4, 'Bank exports (CSV)'));
+      console.log(dim('  Download "transactions" as CSV from each bank and card website. Free, no'));
+      console.log(dim('  signup, and every feature works from it. Automatic sync is the next step.\n'));
 
       // One export per account: a checking account and a card are two files
       // with different layouts, and the card is where the categories are.
@@ -1429,34 +1482,47 @@ program
       if (await yes('Set up a CSV account now?')) {
         do {
           if (await setupCsvAccount(ask, yes, added)) added += 1;
-        } while (await yes('\n  Add another CSV account — a credit card, say?', 'n'));
+        } while (await yes('\n  Add another — every bank and card you use?', 'n'));
       } else {
-        console.log('  skipped — add one later with `finance setup`.');
+        console.log(dim('  skipped — add one later with `finance setup`.'));
       }
 
-      // Both default to no. Each only prints the next commands, but Enter
-      // through a wizard should never read as agreeing to more setup.
-      if (hasBinary('plaid') && await yes('\nSet up Plaid as well?', 'n')) {
-        console.log('\n  1. Create a team at dashboard.plaid.com and find its keys');
-        console.log('  2. finance secret set plaid client_id');
-        console.log('  3. finance secret set plaid secret');
-        console.log('  4. finance link --days 730\n');
-        console.log('  The secret command verifies the keys before trusting them.');
+      // Defaults to no: Enter through a wizard should never read as agreeing
+      // to sign up for something.
+      let linked = 0;
+      console.log(step(3, 4, 'Automatic sync (Plaid)'));
+      console.log(dim('  Optional. Transactions arrive every morning instead of you downloading them.\n'));
+      if (!hasBinary('plaid')) {
+        console.log('  For automatic sync later, install the Plaid CLI and run `finance setup` again:');
+        console.log(`    ${cyan('brew install plaid/plaid-cli/plaid')}`);
+      } else if (await yes(added > 0
+        ? '  Also link banks through Plaid?'
+        : '  Link your banks through Plaid?', 'n')) {
+        linked = await setupPlaid(ask, yes, (cmd, args) => runInteractive(rl, cmd, args));
       }
 
-      if (await yes('\nRun a daily sync automatically?', 'n')) {
-        console.log('  finance schedule install --daily 07:00');
+      console.log(step(4, 4, 'Daily report'));
+      if (added + linked === 0) {
+        console.log(dim('  Nothing to report on yet — add an account first.'));
+      } else if (await yes('  Sync and send you the report every morning at 7:00?', 'n')) {
+        installDaily('07:00', false);
+        const deliverTo = loadConfig().report.deliver;
+        if (!deliverTo.includes('smtp') && !deliverTo.includes('email')) {
+          console.log(dim('  It sends a notification. To get the report by email instead, see'));
+          console.log(dim('  docs/report.md#email — about five minutes with a Gmail app password.'));
+        }
+      } else {
+        console.log(dim('  skipped — later: finance schedule install --daily 07:00'));
       }
 
-      console.log('\nDone. Next:');
-      if (added > 0) {
-        console.log('  finance sync            import what was just configured');
-        console.log('  finance report --open   see it');
-      }
-      console.log('  finance doctor          tells you if anything is off');
+      const next = (cmd: string, why: string) => console.log(`  ${cyan(cmd.padEnd(24))}${dim(why)}`);
+      console.log(`\n${green(bold(added + linked > 0 ? '\u2713 Setup complete.' : 'Setup finished.'))} Next:`);
+      if (added > 0 && linked === 0) next('finance sync', 'import what was just configured');
+      if (added + linked > 0) next('finance report --open', 'see it');
+      next('finance doctor', 'tells you if anything is off');
     } catch (err) {
       if ((err as Error).message === 'input closed') {
-        console.error('\n\nInput ended before setup finished — nothing further was written.');
+        console.error(yellow('\n\nInput ended before setup finished — nothing further was written.'));
         process.exitCode = 1;
         return;
       }
@@ -1477,6 +1543,103 @@ function hasBinary(name: string): boolean {
 }
 
 /**
+ * Hand the terminal to an interactive command (`plaid login`), then take it
+ * back. The wizard's readline holds stdin in raw mode; left that way, the child
+ * reads keystrokes one at a time with no echo, and the parent can swallow
+ * input meant for the child.
+ */
+function runInteractive(rl: Interface, cmd: string, args: string[]): boolean {
+  rl.pause();
+  const raw = process.stdin.isTTY ? process.stdin.isRaw : false;
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  try {
+    // A human is driving it, so the timeout is generous — but there is one.
+    const res = spawnSync(cmd, args, { stdio: 'inherit', timeout: 15 * 60_000 });
+    return res.status === 0;
+  } finally {
+    if (process.stdin.isTTY) process.stdin.setRawMode(raw);
+    rl.resume();
+  }
+}
+
+/**
+ * Plaid, done rather than described. This used to print four commands, and
+ * following them on a fresh config failed: Plaid was never enabled, and the
+ * starter config points at sandbox, where a real bank cannot connect. It also
+ * sent people to find keys in a dashboard that `plaid login` fetches for them.
+ *
+ * Returns how many connections were linked.
+ */
+async function setupPlaid(
+  ask: (q: string, fallback?: string) => Promise<string>,
+  yes: (q: string, fallback?: 'y' | 'n') => Promise<boolean>,
+  interactive: (cmd: string, args: string[]) => boolean,
+): Promise<number> {
+  console.log(dim('\n  Plaid connects to your banks through your OWN free Plaid account — your'));
+  console.log(dim('  banks link to it, not to us. What that exposes: docs/plaid.md'));
+
+  const environment = await yes('\n  Connect your real banks? (n = Plaid\'s test banks, to try it first)', 'y')
+    ? 'production' as const
+    : 'sandbox' as const;
+
+  // Keys: what `plaid login` saved for this environment comes first — it is
+  // per environment, where a stored pair may be the other one's. Copied, never
+  // echoed, and typed by hand only when nothing else has them.
+  let keys = readCliKeys(environment);
+  const stored = Boolean(readSecret('plaid', 'client_id') && readSecret('plaid', 'secret'));
+  if (!keys && !stored) {
+    if (!await yes('\n  Do you already have a Plaid account?', 'n')) {
+      console.log('  Opening the signup page. Create the account and verify the email, then come back.\n');
+      interactive('plaid', ['register']);
+    }
+    console.log('\n  Signing in. This opens your browser and fetches your API keys.\n');
+    interactive('plaid', ['login']);
+    keys = readCliKeys(environment);
+  }
+  if (keys) {
+    getSecretsStore().set('plaid', 'client_id', keys.clientId);
+    getSecretsStore().set('plaid', 'secret', keys.secret);
+    console.log(`\n  ${green('\u2713')} Copied your ${environment} keys into the ${defaultBackend()} keystore ${dim('(not shown)')}`);
+  } else if (!stored) {
+    console.log('\n  No keys came back from `plaid login`. Store them by hand, then run setup again:');
+    console.log('    finance secret set plaid client_id');
+    console.log('    finance secret set plaid secret');
+    return 0;
+  }
+  const keysOk = await verifyPlaidCredentials(environment);
+  if (!keysOk) {
+    if (environment === 'production') {
+      console.log('\n  Real banks need Plaid\'s free Trial Plan, which is a separate approval.');
+      if (await yes('  Open the Trial Plan page now?', 'y')) interactive('plaid', ['trial']);
+      console.log('  Once it is approved, run `finance setup` again.');
+    }
+    return 0;
+  }
+
+  writeFileSync(configPath(), enablePlaidToml(readFileSync(configPath(), 'utf8'), environment));
+  console.log(`  ${green('\u2713')} Plaid enabled (${environment}) ${dim(`in ${configPath()}`)}`);
+
+  console.log(yellow('\n  \u26a0 Link every bank AND every credit card you use. Anything left out is'));
+  console.log(yellow('    invisible: with checking but no cards, all you see is "paid the card".'));
+  if (environment === 'sandbox') {
+    console.log(dim('  Test mode: pick any bank and sign in with user_good / pass_good.'));
+  }
+
+  let linked = 0;
+  do {
+    const kind = await ask('\n  Linking a bank or card (1), or a brokerage (2)?', '1');
+    // Many brokerages do not offer transactions, and asking for it makes them
+    // unselectable in Link — the confusing way to find that out.
+    const ok = await linkAccount({
+      days: '730', history: '24', open: true,
+      ...(kind.trim() === '2' ? { products: 'investments' } : {}),
+    });
+    if (ok) linked += 1;
+  } while (await yes('\n  Link another bank or card?', 'n'));
+  return linked;
+}
+
+/**
  * Point at a folder, show what was found, write the config block.
  *
  * The sample rows are the load-bearing part: a layout guess is worth nothing
@@ -1494,11 +1657,11 @@ async function setupCsvAccount(
 
   const preview = previewCsv(path);
   if (preview.errors.length) {
-    for (const e of preview.errors) console.error(`  ${e}`);
+    for (const e of preview.errors) console.error(red(`  ${e}`));
     return false;
   }
 
-  console.log(`\n  ${preview.files.length} file(s). Reading ${preview.files[0]}\n`);
+  console.log(dim(`\n  ${preview.files.length} file(s). Reading ${preview.files[0]}\n`));
   const d = preview.detected;
   console.log(`    date         ${d.date ?? '(not found)'}   format ${d.dateFormat ?? '?'}`);
   console.log(`    amount       ${d.amount ?? (d.debit && d.credit ? `${d.debit} / ${d.credit}` : '(not found)')}`);
@@ -1507,16 +1670,17 @@ async function setupCsvAccount(
   console.log(`    category     ${d.category ?? '(none — categories will be guessed from descriptions)'}`);
   if (d.balance) console.log(`    ${d.balance} — running balance, ignored`);
 
-  for (const w of d.warnings) console.log(`\n  ! ${w}`);
+  for (const w of d.warnings) console.log(yellow(`\n  \u26a0 ${w}`));
 
-  console.log('\n  First rows as they would be imported (negative = money out):\n');
+  console.log(`\n  ${bold('First rows as they would be imported')} ${dim('(negative = money out)')}\n`);
   for (const row of preview.sample) {
-    console.log(`    ${row.date.padEnd(12)} ${row.amount.padStart(12)}  ${row.description.slice(0, 44)}`
-      + (row.category ? `  [${row.category}]` : ''));
+    const amount = row.amount.padStart(12);
+    console.log(`    ${row.date.padEnd(12)} ${row.amount.startsWith('-') ? amount : green(amount)}  ${row.description.slice(0, 44)}`
+      + (row.category ? `  ${dim(`[${row.category}]`)}` : ''));
   }
 
   if (!await yes('\n  Does that look right?')) {
-    console.log(`  Nothing written. Edit ${configPath()} by hand — the CSV section of the README`);
+    console.log(`  Nothing written. Edit ${configPath()} by hand — docs/csv.md in the project`);
     console.log('  explains each column setting.');
     return false;
   }
@@ -1544,7 +1708,7 @@ async function setupCsvAccount(
     detected: d,
   });
   appendFileSync(configPath(), toml);
-  console.log(`\n  Added "${name}" to ${configPath()}.`);
+  console.log(`\n  ${green('\u2713')} Added "${name}" ${dim(`to ${configPath()}`)}`);
   return true;
 }
 
@@ -1586,16 +1750,16 @@ connections
     }
 
     for (const r of rows) {
-      const state = r.active ? '' : '  (retired)';
-      console.log(`\n${r.provider}  ${r.externalId}${state}`);
+      const state = r.active ? '' : dim('  (retired)');
+      console.log(`\n${bold(r.provider)}  ${r.externalId}${state}`);
       console.log(`  ${r.accounts} account(s) · ${r.delivered} delivered · ${r.counted} counted`
         + (r.earliest ? ` · ${r.earliest} → ${r.latest}` : ''));
       // "delivered but not counted" is the shape of a connection another one
       // has superseded — the number that tells you it is safe to retire.
       if (r.active && r.delivered > 0 && r.counted === 0) {
-        console.log('  ! supplies nothing — another connection covers all of it');
+        console.log(yellow('  ! supplies nothing — another connection covers all of it'));
       }
-      console.log(`  ${r.id}`);
+      console.log(dim(`  ${r.id}`));
     }
     console.log('\nRetire one with: finance connections disable <connection_id>');
   });
@@ -2265,11 +2429,13 @@ program
   .description('Check the install and report what is missing')
   .action(() => {
     let problems = 0;
-    const ok = (m: string) => console.log(`  ✓ ${m}`);
-    const bad = (m: string) => { problems++; console.log(`  ✗ ${m}`); };
-    const note = (m: string) => console.log(`    ${m}`);
+    const ok = (m: string) => console.log(`  ${green('✓')} ${m}`);
+    const bad = (m: string) => { problems++; console.log(`  ${red('✗')} ${red(m)}`); };
+    const warn = (m: string) => { problems++; console.log(`  ${yellow('!')} ${yellow(m)}`); };
+    const note = (m: string) => console.log(dim(`    ${m}`));
+    const section = (title: string) => console.log(`\n${bold(title)}`);
 
-    console.log('\nConfig');
+    section('Config');
     const cfgPath = configPath();
     let config = defaultConfig();
     if (!existsSync(cfgPath)) {
@@ -2284,7 +2450,7 @@ program
       }
     }
 
-    console.log('\nLedger');
+    section('Ledger');
     const dbPath = ledgerPath();
     // Looking must not create: opening a ledger that is not there makes one,
     // so `doctor` before `init` used to report "✓ ledger.db (4 KB, 0 accounts)"
@@ -2313,7 +2479,7 @@ program
       bad(`cannot open ledger: ${(err as Error).message}`);
     }
 
-    console.log('\nProviders');
+    section('Providers');
     const providers = buildProviders(config);
     if (providers.length === 0) {
       bad('none configured');
@@ -2328,10 +2494,10 @@ program
       }
     }
 
-    console.log('\nSecrets');
+    section('Secrets');
     ok(`backend: ${defaultBackend()}`);
 
-    console.log('\nData integrity');
+    section('Data integrity');
     if (!existsSync(dbPath)) {
       note('nothing to check until there is a ledger');
     } else try {
@@ -2344,17 +2510,18 @@ program
         for (const d of found) {
           // Errors here mean the NUMBERS are wrong, not that a command failed.
           if (d.severity === 'error') bad(d.message);
-          else if (d.severity === 'warning') { problems++; console.log(`  ! ${d.message}`); }
-          else console.log(`  · ${d.message}`);
+          else if (d.severity === 'warning') warn(d.message);
+          else console.log(`  ${dim('·')} ${d.message}`);
           for (const line of d.detail ?? []) note(line);
-          if (d.remedy) note(`→ ${d.remedy}`);
+          // The remedy is the line to act on, so it is the one not dimmed.
+          if (d.remedy) console.log(`    ${cyan('→')} ${d.remedy}`);
         }
       }
     } catch (err) {
       bad(`could not run diagnostics: ${(err as Error).message}`);
     }
 
-    console.log('\nSchedule');
+    section('Schedule');
     const sched = scheduleStatus();
     if (sched.installed) ok(`installed${sched.detail ? ` — ${sched.detail}` : ''}`);
     else {
@@ -2364,7 +2531,9 @@ program
       }
     }
 
-    console.log(problems === 0 ? '\nAll good.\n' : `\n${problems} problem(s) found.\n`);
+    console.log(problems === 0
+      ? `\n${green(bold('All good.'))}\n`
+      : `\n${yellow(bold(`${problems} problem(s) found.`))}\n`);
     if (problems > 0) process.exitCode = 1;
   });
 

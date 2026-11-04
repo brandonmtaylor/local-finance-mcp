@@ -22,8 +22,7 @@ import {
   type SpendingSummary,
   type TagTotal,
 } from './queries.js';
-import { attributeTransfers, netByAccount, type BankTransfer } from './attribution.js';
-import { readCashMovements } from './cashMovements.js';
+import { attributeFromCache } from './cashMovements.js';
 
 // ── palette ──────────────────────────────────────────────────────────────────
 // Validated: light (#2a78d6,#eb6834) and dark (#3987e5,#d95926) both pass the
@@ -284,18 +283,9 @@ function transferSources(
   startDate: string,
   endDate: string,
 ): ReportData['transferSources'] {
-  const cache = readCashMovements();
-  if (!cache || cache.movements.length === 0) return undefined;
-
-  const transfers = db.prepare(`
-    SELECT txn_id AS txnId, date, amount_cents AS amountCents, description
-      FROM visible_transactions
-     WHERE spend_group = 'transfers' AND date >= @startDate AND date <= @endDate
-  `).all({ startDate, endDate }) as BankTransfer[];
-  if (transfers.length === 0) return undefined;
-
-  const result = attributeTransfers(transfers, cache.movements);
-  if (result.attributions.length === 0) return undefined;
+  const attributed = attributeFromCache(db, startDate, endDate);
+  if (!attributed || attributed.result.attributions.length === 0) return undefined;
+  const { result, net } = attributed;
 
   const basisFor = new Map<string, Set<string>>();
   for (const a of result.attributions) {
@@ -304,7 +294,7 @@ function transferSources(
     basisFor.set(a.accountId, seen);
   }
 
-  return netByAccount(transfers, result).map((row) => {
+  return net.map((row) => {
     const kinds = basisFor.get(row.accountId) ?? new Set<string>();
     return {
       accountName: row.accountName,

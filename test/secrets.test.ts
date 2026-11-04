@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { runKeystore, readSecret } from '../src/core/secrets.js';
+import { runKeystore, readSecret, serviceName } from '../src/core/secrets.js';
 
 describe('runKeystore', () => {
   it('gives up on a command that never answers, and says why', () => {
@@ -30,5 +30,20 @@ describe('runKeystore', () => {
 describe('readSecret', () => {
   it('prefers the environment, without touching the keystore', () => {
     expect(readSecret('plaid', 'client_id', 'keychain', { FINANCE_PLAID_CLIENT_ID: 'from-env' })).toBe('from-env');
+  });
+});
+
+describe('one set of keys per data directory', () => {
+  it('keeps the existing name for the default directory, so stored keys are still found', () => {
+    expect(serviceName('plaid', { ...process.env, FINANCE_HOME: '' })).toBe('finance-mcp.plaid');
+  });
+
+  it('gives any other FINANCE_HOME its own, so a test profile cannot replace the real keys', () => {
+    // A sandbox secret stored from a test profile used to overwrite the real
+    // production one, and the next morning's sync failed.
+    const a = serviceName('plaid', { ...process.env, FINANCE_HOME: '/tmp/profile-a' });
+    const b = serviceName('plaid', { ...process.env, FINANCE_HOME: '/tmp/profile-b' });
+    expect(a).toMatch(/^finance-mcp-[0-9a-f]{8}\.plaid$/);
+    expect(a).not.toBe(b);
   });
 });

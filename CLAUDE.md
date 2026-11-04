@@ -42,7 +42,7 @@ src/providers/     csv/, plaid/, types.ts (the extension point)
 src/cli.ts         init setup doctor link sync backfill connections accounts
                    summary insights report run afford project notes transfers
                    query categorize note tag secret schedule prune mcp
-src/mcp.ts         thin stdio MCP wrapper over core (22 tools)
+src/mcp.ts         thin stdio MCP wrapper over core (24 tools)
 ```
 
 CLI, MCP server, and cron are three thin consumers of `core`. **No logic in the
@@ -142,6 +142,9 @@ mistakes that are expensive to make, all of which were made here first.
   `com.finance-mcp.sync`, any other `FINANCE_HOME` gets a hashed suffix and
   passes `FINANCE_HOME` to the job. A single name let a test profile replace
   the real daily job, which then ran against the real ledger anyway.
+- Keystore entries are per data directory the same way (`homeSuffix` in
+  `paths.ts`): the default keeps `finance-mcp.<provider>`. One shared name let
+  a test profile's sandbox secret overwrite the real production one.
 
 ## Scheduled jobs (`finance run`)
 

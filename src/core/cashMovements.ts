@@ -15,7 +15,11 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { financeHome } from './paths.js';
-import type { CashMovement } from './attribution.js';
+import type Database from 'better-sqlite3';
+import {
+  attributeTransfers, netByAccount,
+  type CashMovement, type BankTransfer, type AttributionResult,
+} from './attribution.js';
 
 export interface CashMovementCache {
   fetchedAt: string;
@@ -64,4 +68,35 @@ export function writeCashMovements(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ fetchedAt, movements }, null, 2), { mode: 0o600 });
+}
+
+export interface CachedAttribution {
+  /** When sync last refreshed the brokerage feed this rests on. */
+  fetchedAt: string;
+  transfers: BankTransfer[];
+  result: AttributionResult;
+  net: ReturnType<typeof netByAccount>;
+}
+
+/**
+ * A window's bank transfers, attributed to brokerage sub-accounts from the
+ * cache. Shared by the report and the MCP server, neither of which touches the
+ * network. Null when there is no cache or no transfer in the window.
+ */
+export function attributeFromCache(
+  db: Database.Database,
+  startDate: string,
+  endDate: string,
+  cache: CashMovementCache | null = readCashMovements(),
+): CachedAttribution | null {
+  if (!cache || cache.movements.length === 0) return null;
+  const transfers = db.prepare(`
+    SELECT txn_id AS txnId, date, amount_cents AS amountCents, description
+      FROM visible_transactions
+     WHERE spend_group = 'transfers' AND date >= @startDate AND date <= @endDate
+     ORDER BY date DESC
+  `).all({ startDate, endDate }) as BankTransfer[];
+  if (transfers.length === 0) return null;
+  const result = attributeTransfers(transfers, cache.movements);
+  return { fetchedAt: cache.fetchedAt, transfers, result, net: netByAccount(transfers, result) };
 }

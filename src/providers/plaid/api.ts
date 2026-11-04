@@ -146,6 +146,8 @@ export async function createHostedLink(
 
 interface LinkTokenGetResponse {
   link_sessions?: Array<{
+    /** Present once the person closed Link without finishing. Seen in real output. */
+    exit?: { error?: { display_message?: string | null; error_message?: string } | null } | null;
     results?: {
       item_add_results?: Array<{
         public_token?: string;
@@ -155,22 +157,30 @@ interface LinkTokenGetResponse {
   }>;
 }
 
+/** The person closed Link without connecting anything. */
+export interface LinkExited { exited: true; reason: string | null }
+
 /**
  * Check whether the browser flow has completed, without blocking.
  *
  * Returns null while the session is still open, so the caller controls the
- * polling cadence and can stay interruptible.
+ * polling cadence and can stay interruptible. Returns `exited` once every
+ * session ended in an exit with nothing added: closing Link used to leave the
+ * command waiting out its full twenty minutes for a sign-in that was never
+ * coming. Shape taken from a real exited session — `exit` set, `finished_at`
+ * set, `item_add_results` empty.
  */
 export async function pollLinkSession(
   credentials: PlaidCredentials,
   linkToken: string,
   fetcher: Fetcher = globalThis.fetch as unknown as Fetcher,
-): Promise<{ publicToken: string; institutionId: string | null } | null> {
+): Promise<{ publicToken: string; institutionId: string | null } | LinkExited | null> {
   const payload = await call<LinkTokenGetResponse>(
     '/link/token/get', credentials, { link_token: linkToken }, fetcher,
   );
 
-  for (const session of payload.link_sessions ?? []) {
+  const sessions = payload.link_sessions ?? [];
+  for (const session of sessions) {
     for (const result of session.results?.item_add_results ?? []) {
       if (result.public_token) {
         return {
@@ -179,6 +189,12 @@ export async function pollLinkSession(
         };
       }
     }
+  }
+  // Every session, because a hosted link can be reopened: one exited tab
+  // beside one still signing in is not an exit.
+  if (sessions.length > 0 && sessions.every((x) => x.exit)) {
+    const error = sessions.map((x) => x.exit?.error).find((e) => e);
+    return { exited: true, reason: error?.display_message || error?.error_message || null };
   }
   return null;
 }

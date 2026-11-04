@@ -214,3 +214,36 @@ export function slugify(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     || 'account';
 }
+
+/**
+ * The config with Plaid switched on for one environment.
+ *
+ * Edits only the `[providers.plaid]` table, line by line, for the same reason
+ * csvAccountToml appends: the file is the user's and may carry their comments.
+ * Setup used to print "finance link" as the next step without doing this, and
+ * link then refused with "Enable one (e.g. plaid) in the config first" — still
+ * pointed at sandbox, where a real bank cannot connect.
+ */
+export function enablePlaidToml(text: string, environment: 'sandbox' | 'production'): string {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => /^\s*\[providers\.plaid\]\s*(#.*)?$/.test(l));
+  if (start === -1) {
+    const sep = text.endsWith('\n') ? '' : '\n';
+    return `${text}${sep}\n[providers.plaid]\nenabled = true\nenvironment = "${environment}"\n`;
+  }
+  let end = lines.findIndex((l, i) => i > start && /^\s*\[/.test(l));
+  if (end === -1) end = lines.length;
+
+  const set = (key: string, value: string) => {
+    const re = new RegExp(`^(\\s*)${key}\\s*=\\s*[^#]*?(\\s*#.*)?$`);
+    for (let i = start + 1; i < end; i++) {
+      const m = lines[i]!.match(re);
+      if (m) { lines[i] = `${m[1]}${key} = ${value}${m[2] ?? ''}`; return; }
+    }
+    lines.splice(start + 1, 0, `${key} = ${value}`);
+    end += 1;
+  };
+  set('enabled', 'true');
+  set('environment', JSON.stringify(environment));
+  return lines.join('\n');
+}

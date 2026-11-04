@@ -38,6 +38,8 @@ import { collectInsights } from './core/insights.js';
 import { computeBaseline, applyScenario, maxAffordable, principalFromPayment } from './core/afford.js';
 import { buildProviders } from './providers/registry.js';
 import { ledgerPath } from './core/paths.js';
+import { runDiagnostics } from './core/diagnostics.js';
+import { attributeFromCache } from './core/cashMovements.js';
 
 const config = loadConfig();
 const db = openLedger();
@@ -395,6 +397,75 @@ server.registerTool(
     },
   },
   async ({ startDate, endDate }) => json(tagTotals(db, startDate, endDate)),
+);
+
+server.registerTool(
+  'run_diagnostics',
+  {
+    title: 'Check the numbers can be trusted',
+    description:
+      'What `finance doctor` checks for: numbers that are wrong but look plausible. A card ' +
+      'payment with no card linked behind it, a connection that stopped syncing, a CSV export ' +
+      'that has gone stale, spending that is mostly uncategorised, accounts that sync but hold ' +
+      'nothing. Call this first when a figure looks wrong, before explaining it, and tell the ' +
+      'user any remedy in its own words.',
+    inputSchema: {},
+  },
+  async () => {
+    const found = runDiagnostics(db);
+    return found.length === 0
+      ? text('No problems found: every check passed.')
+      : json(found);
+  },
+);
+
+server.registerTool(
+  'get_brokerage_transfers',
+  {
+    title: 'Brokerage transfers by sub-account',
+    description:
+      'Splits bank transfers to and from a brokerage by the sub-account behind each one — so ' +
+      'proceeds arriving and savings going out stop cancelling into one merchant. Reads the ' +
+      'brokerage feed cached by the last sync; it never calls the network. `basis` says how ' +
+      'each was attributed: `matched` against the brokerage, or `inferred` from the account ' +
+      'reference. Unattributed transfers are counted, never guessed at.',
+    inputSchema: {
+      startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    },
+  },
+  async ({ startDate, endDate }) => {
+    const start = startDate ?? '2020-01-01';
+    const end = endDate ?? new Date().toISOString().slice(0, 10);
+    const attributed = attributeFromCache(db, start, end);
+    if (!attributed) {
+      return text(
+        'Nothing to attribute: either no brokerage is linked (finance link --products ' +
+        'investments), the last sync has not cached its feed yet, or there are no transfers ' +
+        `between ${start} and ${end}.`,
+      );
+    }
+    const { result, net, transfers, fetchedAt } = attributed;
+    const by = new Map(result.attributions.map((a) => [a.txnId, a]));
+    // Not `result.learned`: those are account reference prefixes, safe to show
+    // their owner in a terminal and never meant to leave the machine.
+    return json({
+      window: { start, end },
+      brokerageFeedCachedAt: fetchedAt,
+      net: net.map((r) => ({ ...r, net: money(r.netCents) })),
+      matched: result.attributions.filter((a) => a.basis === 'matched').length,
+      inferred: result.attributions.filter((a) => a.basis === 'inferred').length,
+      unattributed: result.unattributed.length,
+      transfers: transfers.slice(0, 200).map((t) => ({
+        txnId: t.txnId,
+        date: t.date,
+        amount: money(t.amountCents),
+        account: by.get(t.txnId)?.accountName ?? null,
+        basis: by.get(t.txnId)?.basis ?? null,
+      })),
+      ...(transfers.length > 200 ? { truncated: `showing the 200 most recent of ${transfers.length}` } : {}),
+    });
+  },
 );
 
 server.registerTool(

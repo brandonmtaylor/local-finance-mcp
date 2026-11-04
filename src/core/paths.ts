@@ -5,7 +5,8 @@
 // Everything user-specific lives in a platform data dir instead.
 
 import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 /** Root for all user state. Override with FINANCE_HOME (tests, multiple profiles). */
 export function financeHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -22,6 +23,26 @@ export function financeHome(env: NodeJS.ProcessEnv = process.env): string {
   // Linux / BSD — XDG Base Directory.
   const xdg = env.XDG_DATA_HOME?.trim();
   return xdg ? join(xdg, 'finance-mcp') : join(homedir(), '.local', 'share', 'finance-mcp');
+}
+
+/**
+ * The data directory, when it is not the default one.
+ *
+ * Anything stored OUTSIDE the data directory — the scheduled job, keystore
+ * entries — is otherwise shared by every FINANCE_HOME. One fixed job name let
+ * a test profile replace the real daily job; one keychain name let a test
+ * profile's sandbox secret overwrite the real production one. The default
+ * directory keeps the bare names, so existing installs are still found.
+ */
+export function customHome(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = resolve(financeHome(env));
+  return home === resolve(financeHome({ ...env, FINANCE_HOME: '' })) ? null : home;
+}
+
+/** "" for the default data directory, else a short stable suffix from its path. */
+export function homeSuffix(env: NodeJS.ProcessEnv = process.env): string {
+  const home = customHome(env);
+  return home ? `-${createHash('sha256').update(home).digest('hex').slice(0, 8)}` : '';
 }
 
 export function configPath(env?: NodeJS.ProcessEnv): string {
