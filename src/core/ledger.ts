@@ -16,7 +16,7 @@ import { ledgerPath } from './paths.js';
 import {
   baseKey, txnId, mintAccountId, mintSourceId, mintConnectionId, naturalKey,
 } from './identity.js';
-import { spendGroupFor, type Category, type SpendGroup } from './normalize.js';
+import { spendGroupFor, type Category } from './normalize.js';
 
 const SCHEMA_VERSION = 2;
 
@@ -515,20 +515,6 @@ export function listConnections(db: Database.Database, providerId?: string): Con
                  FROM connections ${providerId ? 'WHERE provider_id = ?' : ''}
                 ORDER BY priority DESC`;
   return (providerId ? db.prepare(sql).all(providerId) : db.prepare(sql).all()) as ConnectionRow[];
-}
-
-export interface SourceRow {
-  sourceId: string;
-  connectionId: string;
-  accountId: string;
-  externalId: string;
-}
-
-export function listSources(db: Database.Database, accountId?: string): SourceRow[] {
-  const sql = `SELECT source_id AS sourceId, connection_id AS connectionId,
-                      account_id AS accountId, external_id AS externalId
-                 FROM sources ${accountId ? 'WHERE account_id = ?' : ''}`;
-  return (accountId ? db.prepare(sql).all(accountId) : db.prepare(sql).all()) as SourceRow[];
 }
 
 // ── transactions ─────────────────────────────────────────────────────────────

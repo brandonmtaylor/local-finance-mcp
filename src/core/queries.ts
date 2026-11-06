@@ -5,7 +5,7 @@
 // shows up everywhere at once.
 
 import type Database from 'better-sqlite3';
-import { spendGroupFor, type Category, type SpendGroup } from './normalize.js';
+import { type Category, type SpendGroup } from './normalize.js';
 
 // The view already resolves an override onto the row, so every read path
 // gets the corrected category without repeating the COALESCE.
@@ -465,10 +465,6 @@ export function getSpendingSummary(
     const g = groupTotals.find((row) => row.group === group);
     return g ? Math.max(g.outflow, g.inflow) : 0;
   };
-  // Flip sign for display (money out is negative in the ledger, but a spending
-  // total reads better positive). Guard zero: plain negation yields -0, which
-  // Intl faithfully renders as "-$0.00".
-  const positive = (cents: number) => (cents === 0 ? 0 : -cents);
 
   const currency = (db.prepare(
     `SELECT currency FROM visible_transactions t WHERE t.date >= @startDate AND t.date <= @endDate LIMIT 1`,
@@ -494,11 +490,6 @@ export function getSpendingSummary(
       refundsBeyondSpendingCents: floored.beyondCents,
     },
   };
-}
-
-/** Categories a transaction may be reclassified into, for tool schemas. */
-export function categoryGroupPreview(category: Category): SpendGroup {
-  return spendGroupFor(category);
 }
 
 
@@ -624,7 +615,7 @@ export function tagTotals(
            MIN(t.date) AS firstDate, MAX(t.date) AS lastDate
       -- Likewise here, and this one doubles real money: a tag is keyed on
       -- txn_id, which both stored copies share, so joining the base table
-      -- counted a $1,750 repair as $3,500.
+      -- counted a $1,200 repair as $2,400.
       FROM tags gt JOIN visible_transactions t ON t.txn_id = gt.txn_id
      WHERE ${where.join(' AND ')}
      GROUP BY gt.tag ORDER BY totalCents DESC

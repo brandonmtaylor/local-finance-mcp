@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
-import { niceTicks, collectReportData, renderReport, monthlySeries, cumulativeSeries, resolveRange , isPartialPeriod, axisTickIndices } from '../src/core/report.js';
+import { niceTicks, collectReportData, renderReport, monthlySeries, cumulativeSeries, resolveRange, todayIn, isPartialPeriod, axisTickIndices } from '../src/core/report.js';
 import {
   openLedger, 
 } from '../src/core/ledger.js';
@@ -91,6 +91,19 @@ describe('resolveRange', () => {
   it('resolves calendar-anchored windows', () => {
     expect(resolveRange('month-to-date', today)).toEqual({ start: '2026-08-01', end: '2026-08-12' });
     expect(resolveRange('year-to-date', today)).toEqual({ start: '2026-01-01', end: '2026-08-12' });
+  });
+
+  it('takes today as a civil date, so an evening west of UTC is not tomorrow', () => {
+    // 11:30pm on 31 October in Los Angeles is already 1 November in UTC. Read
+    // through toISOString(), month-to-date became "2026-11-01 to 2026-11-01":
+    // an empty window, reported as $0 spent.
+    const lateEvening = new Date('2026-10-31T23:30:00-07:00');
+    expect(todayIn('UTC', lateEvening)).toBe('2026-11-01');
+    expect(todayIn('America/Los_Angeles', lateEvening)).toBe('2026-10-31');
+    expect(resolveRange('month-to-date', todayIn('America/Los_Angeles', lateEvening)))
+      .toEqual({ start: '2026-10-01', end: '2026-10-31' });
+    expect(resolveRange('last-7-days', '2026-08-12'))
+      .toEqual({ start: '2026-08-06', end: '2026-08-12' });
   });
 
   it('uses the ledger\'s earliest transaction for "all"', () => {
@@ -318,6 +331,23 @@ describe('drill-down', () => {
     expect(html).toMatch(/class="drill"/);
     expect(html).toContain('3 transactions');
     expect(html).toContain('MERCHANT 0');
+  });
+
+  it('shows a refund as a refund, not as one more purchase', () => {
+    // A $150 purchase and a $60 return: the category row says $90, and the
+    // drill-down under it listed "$150.00" and "$60.00" — two purchases
+    // summing to $210 under a heading of $90.
+    txn({ date: '2026-06-05', amountCents: -15_000, description: 'SHOP', category: 'shopping' });
+    txn({ date: '2026-06-19', amountCents: 6_000, description: 'SHOP REFUND', category: 'shopping' });
+
+    const html = renderReport([{
+      label: 'test', id: 't',
+      data: collectReportData(db, '2026-06-01', '2026-06-30', new Date('2026-07-01T00:00:00Z')),
+    }]);
+
+    expect(html).toContain('$90.00');
+    expect(html).toContain('−$60.00 refund');
+    expect(html).not.toMatch(/<td class="num">\$60\.00</);
   });
 
   it('caps how many it inlines and says it capped them', () => {

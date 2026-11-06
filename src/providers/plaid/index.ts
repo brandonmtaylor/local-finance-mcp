@@ -359,7 +359,6 @@ async function linkViaApi(
   const fetcher = deps.fetcher ?? (globalThis.fetch as unknown as Fetcher);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
   const now = deps.now ?? (() => Date.now());
-  const addItem = deps.addItem ?? addItemToCliConfig;
   const credentials = { clientId, secret, environment: options.environment };
 
   // Resume a session whose wait timed out. The Item already exists at Plaid;

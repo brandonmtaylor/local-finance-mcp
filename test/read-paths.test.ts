@@ -7,7 +7,7 @@
 // account, so it survives every fixture that uses a single one.
 //
 // Three sites had exactly this defect after the identity rewrite, including
-// tagTotals, which turned a $1,750 repair into $3,500. Naming the view's
+// tagTotals, which turned a $1,200 repair into $2,400. Naming the view's
 // columns after the base table's protects against forgetting to resolve an
 // override; nothing protects against selecting the wrong table, so this does.
 

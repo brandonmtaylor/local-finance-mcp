@@ -217,6 +217,28 @@ describe('incomeCadence', () => {
     expect(incomeCadence(db, '2026-07-02', '2026-08-14')!.expected).toBe(2);
   });
 
+  it('does not count a bonus as a payday once the schedule is known', () => {
+    // Five months of semi-monthly pay plus one bonus on the 30th. The bonus
+    // was counted as an eleventh deposit against ten expected, and the
+    // summary said income was HIGH "for calendar reasons alone" — but the
+    // calendar was ordinary and the money was real.
+    for (const m of ['06', '07', '08', '09', '10']) { pay(`2026-${m}-01`); pay(`2026-${m}-15`); }
+    txn({ date: '2026-09-30', amountCents: 150_000, category: 'income', description: 'PAYROLL BONUS' });
+    const c = incomeCadence(db, '2026-06-01', '2026-10-31')!;
+    expect(c.daysOfMonth).toEqual([1, 15]);
+    expect(c).toMatchObject({ observed: 10, expected: 10 });
+  });
+
+  it('expects no paydays before the ledger begins', () => {
+    // A window entirely before the first deposit on record held "0 of 2" and
+    // was explained as calendar timing — the coverage note beside it was the
+    // right explanation, and this one contradicted it.
+    for (const m of ['06', '07', '08', '09', '10']) { pay(`2026-${m}-01`); pay(`2026-${m}-15`); }
+    expect(incomeCadence(db, '2026-05-01', '2026-05-31')).toMatchObject({ observed: 0, expected: 0 });
+    // Straddling the start counts only the paydays the ledger could hold.
+    expect(incomeCadence(db, '2026-05-15', '2026-06-14')).toMatchObject({ observed: 1, expected: 1 });
+  });
+
   it('keeps averaging for pay every two weeks, which drifts through the month', () => {
     let d = Date.UTC(2026, 3, 3);
     for (let i = 0; i < 14; i++, d += 14 * 86_400_000) pay(new Date(d).toISOString().slice(0, 10));

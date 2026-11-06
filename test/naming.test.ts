@@ -14,8 +14,12 @@ describe('identifiers that carry existing user state', () => {
   it('keeps the data directory, or every existing ledger is orphaned', () => {
     // On upgrade the tool would come up empty and behave exactly like a fresh
     // install — the worst available failure, because nothing looks broken.
-    expect(financeHome()).toMatch(/finance-mcp$/);
-    expect(financeHome()).not.toMatch(/local-finance-mcp$/);
+    // The DEFAULT directory is what matters here, so clear any FINANCE_HOME
+    // the shell happens to export — with one set, this test failed on the
+    // override's basename while the code under test was fine.
+    const env = { ...process.env, FINANCE_HOME: '' };
+    expect(financeHome(env)).toMatch(/finance-mcp$/);
+    expect(financeHome(env)).not.toMatch(/local-finance-mcp$/);
   });
 
   it('keeps the keychain service name, or every credential goes invisible', () => {

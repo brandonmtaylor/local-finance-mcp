@@ -120,6 +120,22 @@ export type RangeName =
   | 'month-to-date' | 'year-to-date' | 'all';
 
 /**
+ * Today's date in the configured time zone, as YYYY-MM-DD.
+ *
+ * Every "today" used to come from `toISOString()`, which is UTC. West of
+ * Greenwich that is tomorrow from late afternoon on, so a summary run at 6pm
+ * ended on a date that had not happened yet — and on the last evening of a
+ * month, `month-to-date` was the first day of the NEXT month: an empty window
+ * reported as $0 spent. The config's `timezone` exists for exactly this.
+ */
+export function todayIn(timezone: string, now = new Date()): string {
+  // en-CA is the locale whose short date is already YYYY-MM-DD.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+}
+
+/**
  * Resolve a configured range to concrete dates.
  *
  * `all` needs the ledger, since "everything" means the earliest transaction
@@ -128,11 +144,14 @@ export type RangeName =
  */
 export function resolveRange(
   range: RangeName,
-  today = new Date(),
+  /** A Date is read in UTC; a YYYY-MM-DD string is taken as given. */
+  today: Date | string = new Date(),
   db?: Database.Database,
 ): { start: string; end: string } {
   const ymd = (d: Date) => d.toISOString().slice(0, 10);
-  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const end = typeof today === 'string'
+    ? new Date(`${today}T00:00:00Z`)
+    : new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const back = (days: number) => {
     const d = new Date(end);
     d.setUTCDate(d.getUTCDate() - (days - 1));   // inclusive of both ends
@@ -628,7 +647,12 @@ function renderPanel(data: ReportData, partial = false): string {
               <td class="drill-date">${r.date}</td>
               <td>${esc(r.description.slice(0, 46))}</td>
               <td class="drill-acct">${esc(r.account.slice(0, 18))}</td>
-              <td class="num">${moneyExact(Math.abs(r.amountCents))}</td>
+              <td class="num">${r.amountCents > 0
+    // Money IN to a spending category is a refund and reduces the figure
+    // above. Shown unsigned it read as one more purchase, and the rows
+    // visibly summed to more than the category they explain.
+    ? `−${moneyExact(r.amountCents)} refund`
+    : moneyExact(-r.amountCents)}</td>
             </tr>`).join('')}
           </tbody>
         </table>

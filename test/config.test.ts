@@ -20,6 +20,13 @@ describe('ConfigSchema', () => {
     expect(() => ConfigSchema.parse(base)).not.toThrow();
   });
 
+  it('rejects a time zone that is not an IANA name', () => {
+    // "today" is resolved in this zone, so a typo would otherwise surface as a
+    // RangeError inside the first summary rather than at startup.
+    expect(() => ConfigSchema.parse({ ...base, timezone: 'Central' })).toThrow(/IANA/);
+    expect(() => ConfigSchema.parse({ ...base, timezone: 'Europe/London' })).not.toThrow();
+  });
+
   it('accepts ai on the report table, where it belongs', () => {
     const parsed = ConfigSchema.parse({ ...base, report: { ...base.report, ai: true } });
     expect(parsed.report.ai).toBe(true);

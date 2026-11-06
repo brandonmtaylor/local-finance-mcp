@@ -82,7 +82,7 @@ describe('re-linking', () => {
     const id = upsertTransaction(db, old.sourceId, old.accountId, txn({ externalId: 'plaid-txn-A' }));
     setCategoryOverride(db, id, 'housing');
     setNote(db, id, 'fixed the dishwasher leak');
-    addTag(db, id, 'appliance-leak');
+    addTag(db, id, 'garage-door');
 
     const fresh = link('item-plaid-acct-NEW', 'plaid-acct-NEW');
     const newId = upsertTransaction(db, fresh.sourceId, fresh.accountId, txn({ externalId: 'plaid-txn-Z' }));

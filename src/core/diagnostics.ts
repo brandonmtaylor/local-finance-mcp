@@ -257,7 +257,6 @@ export function detectUnlinkedCards(db: Database.Database): Diagnostic[] {
                      JOIN connections c ON c.connection_id = s.connection_id
                     WHERE s.account_id = a.account_id AND c.active = 1)
   `).get() as { n: number };
-  const gap = payments.cents - cardSpend.cents;
 
   const money = dollars;
 

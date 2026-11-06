@@ -53,8 +53,3 @@ export function buildProviders(config: Config, options: RegistryOptions = {}): P
 
   return providers;
 }
-
-/** Provider ids that would be active — for `doctor`, before anything is synced. */
-export function configuredProviderIds(config: Config): string[] {
-  return buildProviders(config).map((p) => p.id);
-}

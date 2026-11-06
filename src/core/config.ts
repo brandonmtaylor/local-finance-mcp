@@ -152,7 +152,10 @@ const ReportSchema = z.object({
 
 export const ConfigSchema = z.object({
   /** IANA tz — resolves "this month" and friends. */
-  timezone: z.string().default('UTC'),
+  timezone: z.string().default('UTC').refine((tz) => {
+    // Checked here so a typo fails at startup, not inside the first summary.
+    try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+  }, 'must be an IANA time zone, e.g. America/New_York or Europe/London'),
   baseCurrency: z.string().length(3).default('USD'),
   freshness: FreshnessSchema.prefault({}),
   narration: NarrationSchema.prefault({}),

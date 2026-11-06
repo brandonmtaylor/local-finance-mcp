@@ -121,7 +121,7 @@ describe('notes', () => {
 describe('tagTotals', () => {
   beforeEach(() => {
     // One cause, three categories, three weeks — the case tags exist for.
-    const repair = txn({ date: '2026-06-04', amountCents: -175_000, category: 'housing' });
+    const repair = txn({ date: '2026-06-04', amountCents: -120_000, category: 'housing' });
     const plumber = txn({ date: '2026-06-02', amountCents: -6_000, category: 'professional_services' });
     const appliance = txn({ date: '2026-06-20', amountCents: -89_900, category: 'shopping' });
     txn({ date: '2026-06-10', amountCents: -5_000, category: 'groceries' }); // unrelated
@@ -131,14 +131,14 @@ describe('tagTotals', () => {
   it('totals an episode across categories and reports its span', () => {
     const [total] = tagTotals(db);
     expect(total).toMatchObject({
-      tag: 'dishwasher-leak', count: 3, totalCents: 270_900,
+      tag: 'dishwasher-leak', count: 3, totalCents: 215_900,
       firstDate: '2026-06-02', lastDate: '2026-06-20',
     });
   });
 
   it('excludes untagged spending', () => {
     expect(tagTotals(db)).toHaveLength(1);
-    expect(tagTotals(db)[0]!.totalCents).toBe(270_900);
+    expect(tagTotals(db)[0]!.totalCents).toBe(215_900);
   });
 
   it('respects a date window', () => {
@@ -182,7 +182,7 @@ describe('filtering by tag', () => {
 describe('tag totals across connections', () => {
   it('counts a tagged transaction once when two connections deliver it', () => {
     // A tag is keyed on txn_id, which both stored copies share, so joining the
-    // base table counted a $1,750 repair as $3,500 — the tag feature exists
+    // base table counted a $1,200 repair as $2,400 — the tag feature exists
     // precisely to answer "what did that episode cost", so doubling it is the
     // worst possible place for this bug.
     // Same institution, mask and type, so it resolves to the account already
@@ -190,17 +190,17 @@ describe('tag totals across connections', () => {
     const second = seedAccount(db, 'a1-relinked', { mask: '00a1', itemId: 'item-second' });
 
     const row = {
-      date: '2026-06-04', amountCents: -175_000,
+      date: '2026-06-04', amountCents: -120_000,
       description: 'HANDYMAN', category: 'housing' as const,
     };
     const id = seedTxn(db, acct, { ...row, externalId: 'from-old' });
     const same = seedTxn(db, second, { ...row, externalId: 'from-new' });
-    addTag(db, id, 'appliance-leak');
+    addTag(db, id, 'garage-door');
 
     expect(same).toBe(id); // one real transaction
 
     const [total] = tagTotals(db);
     expect(total!.count).toBe(1);
-    expect(total!.totalCents).toBe(175_000);
+    expect(total!.totalCents).toBe(120_000);
   });
 });

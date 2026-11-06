@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tryAcquireLock } from '../src/core/lock.js';
+import { lockPath, financeHome } from '../src/core/paths.js';
 
 let dir: string;
 let path: string;
@@ -87,5 +88,18 @@ describe('tryAcquireLock', () => {
     const held = tryAcquireLock('sync', path, NOW)!;
     held.release();
     expect(() => held.release()).not.toThrow();
+  });
+});
+
+describe('the test harness', () => {
+  it('gives every test file its own data directory, so the lock is never shared', () => {
+    // Two test files that both call syncAll ran in parallel workers against
+    // ONE lock file — the real data directory's, since nothing set
+    // FINANCE_HOME — and the loser got null back, failing about one run in
+    // five. test/setup-env.ts isolates each file; this keeps it that way.
+    const home = process.env.FINANCE_HOME;
+    expect(home).toBeTruthy();
+    expect(lockPath()).toBe(join(home!, 'sync.lock'));
+    expect(home).not.toBe(financeHome({ ...process.env, FINANCE_HOME: '' }));
   });
 });

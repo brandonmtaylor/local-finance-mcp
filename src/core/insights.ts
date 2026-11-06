@@ -455,10 +455,15 @@ export function incomeCadence(
   const regular = gaps.filter((g) => Math.abs(g - medianGapDays) <= 3).length;
   if (regular / gaps.length < 0.5) return null;
 
-  const inWindow = dates.filter((d) => d.date >= startDate && d.date <= endDate);
-  const spanDays = Math.round(
-    (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000,
-  ) + 1;
+  // Paydays are only expected where the ledger reaches. A window that starts
+  // before the first deposit on record — the month before a CSV export
+  // begins — held "0 of 2 paydays" and was explained as a calendar artefact,
+  // when the pay is simply not in the data. The coverage note already says
+  // that; this must not contradict it.
+  const from = startDate < dates[0]!.date ? dates[0]!.date : startDate;
+  const spanDays = Math.max(0, Math.round(
+    (Date.parse(endDate) - Date.parse(from)) / 86_400_000,
+  ) + 1);
 
   // Pay on the 1st and 15th has a median gap of ~15 days, and 92 / 15 says a
   // quarter "usually holds 6.6" — so a perfectly ordinary quarter with six
@@ -466,8 +471,19 @@ export function incomeCadence(
   // counted on the calendar instead.
   const anchors = calendarAnchors(dates.map((d) => d.date));
   const expected = anchors
-    ? anchorDaysIn(anchors, startDate, endDate)
+    ? anchorDaysIn(anchors, from, endDate)
     : Math.round((spanDays / medianGapDays) * 10) / 10;
+
+  // Once the schedule is known, only deposits ON it are paydays. A bonus that
+  // lands mid-month on top of the usual two was counted as a third payday,
+  // and the window was then reported HIGH "for calendar reasons alone" — the
+  // one explanation that was wrong, since the extra money was real.
+  const onSchedule = (d: string) => {
+    if (!anchors) return true;
+    const day = Number(d.slice(8, 10));
+    return anchors.some((a) => Math.abs((day >= 28 ? 31 : day) - a) <= 3);
+  };
+  const inWindow = dates.filter((d) => d.date >= startDate && d.date <= endDate && onSchedule(d.date));
 
   return {
     medianGapDays,

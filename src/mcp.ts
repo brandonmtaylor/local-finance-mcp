@@ -35,6 +35,7 @@ import {
 } from './core/queries.js';
 import { syncAll, oldestSyncAmong } from './core/sync.js';
 import { collectInsights } from './core/insights.js';
+import { todayIn } from './core/report.js';
 import { computeBaseline, applyScenario, maxAffordable, principalFromPayment } from './core/afford.js';
 import { buildProviders } from './providers/registry.js';
 import { ledgerPath } from './core/paths.js';
@@ -261,7 +262,9 @@ server.registerTool(
     },
   },
   async (args) => {
-    const baseline = computeBaseline(db, { excludeTags: args.excludeTags });
+    const baseline = computeBaseline(db, {
+      excludeTags: args.excludeTags, endDate: todayIn(config.timezone),
+    });
     if (baseline.monthsCovered === 0) return text(baseline.warnings[0]!);
 
     const dollars = (v?: number) => (v === undefined ? undefined : Math.round(v * 100));
@@ -436,7 +439,7 @@ server.registerTool(
   },
   async ({ startDate, endDate }) => {
     const start = startDate ?? '2020-01-01';
-    const end = endDate ?? new Date().toISOString().slice(0, 10);
+    const end = endDate ?? todayIn(config.timezone);
     const attributed = attributeFromCache(db, start, end);
     if (!attributed) {
       return text(

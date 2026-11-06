@@ -227,7 +227,7 @@ export function computeBaseline(db: Database.Database, options: BaselineOptions 
     warnings.push('income varies month to month — an average hides bonus timing');
   }
   if (options.excludeTags?.length && excluded > 0) {
-    warnings.push(`${(excluded / 100).toFixed(2)} of tagged one-offs excluded from the baseline`);
+    warnings.push(`$${(excluded / 100).toFixed(2)} of tagged one-offs excluded from the baseline`);
   }
   if (!options.excludeTags?.length) {
     warnings.push('no one-offs excluded — tag unusual costs and re-run to see a truer baseline');

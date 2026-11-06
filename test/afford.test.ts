@@ -65,15 +65,16 @@ describe('computeBaseline', () => {
 
   it('excludes tagged one-offs and says how much was removed', () => {
     twoMonths(1_000_000, 600_000);
-    const oneoff = txn({ date: '2026-06-04', amountCents: -175_000, category: 'housing' });
+    const oneoff = txn({ date: '2026-06-04', amountCents: -120_000, category: 'housing' });
     addTag(db, oneoff, 'move');
 
     const withIt = computeBaseline(db, { endDate: '2026-08-12' });
     const without = computeBaseline(db, { endDate: '2026-08-12', excludeTags: ['move'] });
 
-    expect(withIt.monthlySpendingCents).toBe(687_500);   // the $1,750 spread over 2 months
+    expect(withIt.monthlySpendingCents).toBe(660_000);   // the $1,200 spread over 2 months
     expect(without.monthlySpendingCents).toBe(600_000);
-    expect(without.warnings.join(' ')).toMatch(/1750\.00 of tagged one-offs excluded/);
+    // With a currency sign: the bare "1200.00" read as a count, not an amount.
+    expect(without.warnings.join(' ')).toMatch(/\$1200\.00 of tagged one-offs excluded/);
   });
 
   it('nudges you to tag one-offs when none are excluded', () => {

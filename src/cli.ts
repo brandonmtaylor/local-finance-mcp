@@ -13,11 +13,11 @@ import { loadConfig, defaultConfig } from './core/config.js';
 import { CATEGORIES, isCategory, type Category } from './core/normalize.js';
 import { configPath, financeHome, ledgerPath, providerStateDir, expandPath } from './core/paths.js';
 import {
-  collectReportData, renderReport, resolveRange, isPartialPeriod, type ReportPanel,
+  collectReportData, renderReport, resolveRange, todayIn, isPartialPeriod, type ReportPanel,
 } from './core/report.js';
 import { collectInsights, incomeCadence } from './core/insights.js';
 import {
-  runDiagnostics, prune, previewPrune, detectSupersededConnections, type Diagnostic,
+  runDiagnostics, prune, previewPrune, detectSupersededConnections,
 } from './core/diagnostics.js';
 import { computeBaseline, applyScenario, maxAffordable, principalFromPayment, monthlyFromAnnual, detectIncomeSpike } from './core/afford.js';
 import { narrate } from './core/narrate.js';
@@ -41,7 +41,7 @@ import {
 import { writeCashMovements, readCashMovements } from './core/cashMovements.js';
 import { ensureNotesFile, notesPath, readNotes } from './core/notes.js';
 import {
-  createProject, getProject, updateProject, closeProject, upsertVendor, getVendor, listVendors,
+  createProject, getProject, updateProject, closeProject, upsertVendor, listVendors,
   addLineItem, settleLineItem, setLineItemStatus, projectReport, allProjectReports,
 } from './core/projects.js';
 import { detectVests, monthlyNetEquity } from './core/equity.js';
@@ -460,9 +460,10 @@ program
   .action((opts: { start?: string; end?: string; range?: string }) => {
     const db = openLedger();
     if (stopIfNoData(db)) return;
+    const today = todayIn(loadConfig().timezone);
     const r = opts.start
-      ? { start: opts.start, end: opts.end ?? new Date().toISOString().slice(0, 10) }
-      : resolveRange((opts.range ?? 'last-30-days') as never, new Date(), db);
+      ? { start: opts.start, end: opts.end ?? today }
+      : resolveRange((opts.range ?? 'last-30-days') as never, today, db);
     const s = getSpendingSummary(db, r.start, r.end);
 
     console.log(`\n${bold(`Spending ${s.startDate} → ${s.endDate}`)}`);
@@ -539,7 +540,7 @@ program
       // that category spent — a payout or reimbursement, not a refund.
       console.log(`\n  Set aside: ${money(s.excluded.refundsBeyondSpendingCents, s.currency)} arrived in spending categories`);
       console.log('    beyond what they spent here — likely payouts or reimbursements, so counted as');
-      console.log('    neither spending nor income. `finance doctor` lists them.');
+      console.log('    neither spending nor income. `finance doctor` lists any large enough to matter.');
     }
     db.close();
   });
@@ -556,9 +557,10 @@ program
   .action((opts: { start?: string; end?: string; range?: string; json?: boolean }) => {
     const db = openLedger();
     if (stopIfNoData(db, opts.json)) return;
+    const today = todayIn(loadConfig().timezone);
     const r = opts.start
-      ? { start: opts.start, end: opts.end ?? new Date().toISOString().slice(0, 10) }
-      : resolveRange((opts.range ?? 'last-30-days') as never, new Date(), db);
+      ? { start: opts.start, end: opts.end ?? today }
+      : resolveRange((opts.range ?? 'last-30-days') as never, today, db);
     const brief = collectInsights(db, r.start, r.end);
     const ends = dataEndsEarly(db, r.end);
     db.close();
@@ -642,14 +644,14 @@ program
 
     // --start/--end win; otherwise a named range; otherwise the configured one.
     // `all` needs the db to find the earliest transaction it actually holds.
+    const today = todayIn(config.timezone);
     const resolved = opts.start
-      ? { start: opts.start, end: opts.end ?? new Date().toISOString().slice(0, 10) }
-      : resolveRange((opts.range ?? config.report.range) as never, new Date(), db);
+      ? { start: opts.start, end: opts.end ?? today }
+      : resolveRange((opts.range ?? config.report.range) as never, today, db);
 
     // The chosen range leads; the others become tabs, so one file answers
     // "this month" and "everything" without regenerating.
-    const panels = buildPanels(db, resolved, Boolean(opts.start));
-    const data = panels[0]!.data;
+    const panels = buildPanels(db, resolved, Boolean(opts.start), today);
 
     // --ai / --no-ai override the config; otherwise the config decides.
     let narration;
@@ -690,6 +692,7 @@ function buildPanels(
   db: ReturnType<typeof openLedger>,
   resolved: { start: string; end: string },
   exact: boolean,
+  today: string,
 ): ReportPanel[] {
   const primary: ReportPanel = {
     id: 'primary',
@@ -706,7 +709,7 @@ function buildPanels(
 
   const panels = [primary];
   for (const extra of extras) {
-    const r = resolveRange(extra.range as never, new Date(), db);
+    const r = resolveRange(extra.range as never, today, db);
     // Skip a window identical to one already shown.
     if (panels.some((p) => p.data.startDate === r.start && p.data.endDate === r.end)) continue;
     panels.push({
@@ -781,8 +784,9 @@ program
     for (const d of problems) console.log(`  ! ${d.message}`);
 
     // 3. Report.
-    const { start, end } = resolveRange(config.report.range, new Date(), db);
-    const panels = buildPanels(db, { start, end }, false);
+    const today = todayIn(config.timezone);
+    const { start, end } = resolveRange(config.report.range, today, db);
+    const panels = buildPanels(db, { start, end }, false, today);
     const data = panels[0]!.data;
 
     let narration;
@@ -1203,7 +1207,9 @@ program
     excludeTag?: string[]; since?: string; rate: string; term: string;
   }) => {
     const db = openLedger();
-    const baseline = computeBaseline(db, { excludeTags: opts.excludeTag, sinceMonth: opts.since });
+    const baseline = computeBaseline(db, {
+      excludeTags: opts.excludeTag, sinceMonth: opts.since, endDate: todayIn(loadConfig().timezone),
+    });
     db.close();
 
     if (baseline.monthsCovered === 0) {
