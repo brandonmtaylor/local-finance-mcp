@@ -14,6 +14,9 @@ import { mkdirSync } from 'node:fs';
 import { platform, homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { sendViaSmtp, type SmtpSettings } from './smtp.js';
+import { markdownToHtml, type NarrationResult } from './narrate.js';
+import { dataEndsMessage } from './queries.js';
+import { esc, titleCase, type ReportData } from './report.js';
 
 export type DeliveryChannel = 'notify' | 'email' | 'smtp' | 'copy' | 'command' | 'open' | 'save-only';
 
@@ -271,6 +274,34 @@ export interface DeliverySummary {
   startDate: string;
   endDate: string;
   reportPath: string;
+  /** What the HTML email shows beyond the three figures. */
+  details?: EmailDetails;
+}
+
+/** The part of a report worth reading without opening the attachment. */
+export interface EmailDetails {
+  categories: Array<{ label: string; cents: number }>;
+  unusual: Array<{ date: string; description: string; cents: number }>;
+  newMerchants: Array<{ merchant: string; cents: number }>;
+  analysis?: { markdown: string; producedBy: string };
+  /** Set when the ledger stops short of the window, so the totals are missing days. */
+  dataEnds?: string;
+}
+
+export function emailDetails(data: ReportData, narration?: NarrationResult): EmailDetails {
+  const { summary, insights } = data;
+  return {
+    categories: summary.byCategory.slice(0, 6)
+      .map((c) => ({ label: titleCase(c.category), cents: c.amountCents })),
+    unusual: insights.unusual.slice(0, 5)
+      .map((u) => ({ date: u.date, description: u.description, cents: u.amountCents })),
+    newMerchants: insights.newMerchants.slice(0, 5)
+      .map((m) => ({ merchant: m.merchant, cents: m.totalCents })),
+    ...(narration?.ok && narration.markdown
+      ? { analysis: { markdown: narration.markdown, producedBy: narration.producedBy } }
+      : {}),
+    ...(summary.dataEnds ? { dataEnds: dataEndsMessage(summary.dataEnds) } : {}),
+  };
 }
 
 const money = (cents: number) =>
@@ -285,15 +316,19 @@ export function headline(s: DeliverySummary): string {
   return s.problems?.length ? `⚠ ${s.problems.length} issue · ${base}` : base;
 }
 
+/** Everything that casts doubt on the figures, whichever form the email takes. */
+const warnings = (s: DeliverySummary) =>
+  [...(s.problems ?? []), ...(s.details?.dataEnds ? [s.details.dataEnds] : [])];
+
 export function emailBody(s: DeliverySummary): string {
   // Problems go ABOVE the figures, deliberately. Anything reported after a
   // number has already been read as context for that number rather than as a
   // reason to doubt it — and the whole point of saying "a card stopped
   // reporting" is that the total below it is wrong.
-  const problems = s.problems?.length
+  const problems = warnings(s).length
     ? [
       'BEFORE YOU READ THESE NUMBERS:',
-      ...s.problems.map((p) => `  ! ${p}`),
+      ...warnings(s).map((p) => `  ! ${p}`),
       '',
     ]
     : [];
@@ -311,6 +346,85 @@ export function emailBody(s: DeliverySummary): string {
     '',
     `Generated locally by local-finance-mcp · ${basename(s.reportPath)}`,
   ].join('\n');
+}
+
+/**
+ * The same email for a client that renders HTML, with the detail that is worth
+ * a glance on a phone.
+ *
+ * Not the report. Gmail clips a message at about 102 KB, strips inline SVG, and
+ * drops the CSS the report's tabs need, so the report stays an attachment. This
+ * is built for those limits: tables and inline styles only, fixed light colours,
+ * and bars that are table cells.
+ */
+export function emailHtml(s: DeliverySummary): string {
+  const ink = '#1a1a1a';
+  const muted = '#6b6b6b';
+  const rule = '#e4e4e0';
+  const d = s.details;
+
+  const heading = (title: string) =>
+    `<p style="margin:24px 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:${muted}">${esc(title)}</p>`;
+  const row = (left: string, right: string) => `
+    <tr>
+      <td style="padding:6px 8px 6px 0;border-top:1px solid ${rule};font-size:14px">${left}</td>
+      <td align="right" style="padding:6px 0;border-top:1px solid ${rule};font-size:14px;white-space:nowrap">${right}</td>
+    </tr>`;
+  const list = (rows: string) =>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>`;
+  const tile = (label: string, cents: number, colour: string) => `
+    <td width="33%" style="padding:12px 4px 12px 0;vertical-align:top">
+      <div style="font-size:12px;color:${muted}">${label}</div>
+      <div style="font-size:22px;font-weight:600;color:${colour}">${money(cents)}</div>
+    </td>`;
+
+  const largest = Math.max(...(d?.categories ?? []).map((c) => c.cents), 1);
+  const bar = (cents: number) => {
+    const width = Math.max(1, Math.round((cents / largest) * 100));
+    return `
+    <tr><td colspan="2" style="padding:0 0 8px">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="${width}%" height="6" bgcolor="#2a78d6" style="font-size:0;line-height:0">&nbsp;</td>
+        ${width < 100 ? `<td width="${100 - width}%" height="6" bgcolor="#eeeeea" style="font-size:0;line-height:0">&nbsp;</td>` : ''}
+      </tr></table>
+    </td></tr>`;
+  };
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ffffff">
+<div style="max-width:560px;margin:0 auto;padding:20px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${ink};line-height:1.45">
+  <p style="margin:0;font-size:18px;font-weight:600">Finance report</p>
+  <p style="margin:2px 0 12px;font-size:13px;color:${muted}">${esc(s.startDate)} to ${esc(s.endDate)}</p>
+  ${warnings(s).length ? `
+  <div style="margin:0 0 8px;padding:10px 12px;background:#fff6e0;border:1px solid #e8c56a;font-size:14px">
+    <strong>Before you read these numbers</strong>
+    ${warnings(s).map((p) => `<div style="margin-top:6px">${esc(p)}</div>`).join('')}
+  </div>` : ''}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    ${tile('Spending', s.spendingCents, ink)}${tile('Income', s.incomeCents, ink)}${tile('Net', s.netCents, s.netCents < 0 ? '#c0392b' : '#1e8e3e')}
+  </tr></table>
+  ${d?.categories.length ? heading('Where it went') + `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${d.categories.map((c) => `
+    <tr>
+      <td style="padding:4px 8px 3px 0;font-size:14px">${esc(c.label)}</td>
+      <td align="right" style="padding:4px 0 3px;font-size:14px;white-space:nowrap">${money(c.cents)}</td>
+    </tr>${bar(c.cents)}`).join('')}</table>` : ''}
+  ${d?.unusual.length ? heading('Worth a look') + list(d.unusual.map((u) => row(
+    `${esc(u.description)}<br><span style="font-size:12px;color:${muted}">${esc(u.date)}</span>`, money(u.cents),
+  )).join('')) : ''}
+  ${d?.newMerchants.length ? heading('New merchants') + list(d.newMerchants.map((m) => row(
+    esc(m.merchant), money(m.cents),
+  )).join('')) : ''}
+  ${d?.analysis ? heading('Analysis') + `
+  <div style="font-size:14px">${markdownToHtml(d.analysis.markdown)}</div>
+  <p style="margin:8px 0 0;font-size:12px;color:${muted}">Written by ${esc(d.analysis.producedBy)} from the computed figures.</p>` : ''}
+  <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${rule};font-size:12px;color:${muted}">
+    Charts and every transaction are in the attached report, which opens on a phone with no app.<br>
+    Generated locally by local-finance-mcp · ${esc(basename(s.reportPath))}
+  </p>
+</div>
+</body></html>`;
 }
 
 export interface DeliveryConfig {
@@ -413,6 +527,7 @@ export async function deliver(
           {
             subject: `Finance report ${summary.startDate} → ${summary.endDate}`,
             body: emailBody(summary),
+            html: emailHtml(summary),
             attachment: summary.reportPath,
           },
         )) as { ok: boolean; detail: string };

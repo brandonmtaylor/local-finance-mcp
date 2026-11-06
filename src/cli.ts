@@ -21,7 +21,7 @@ import {
 } from './core/diagnostics.js';
 import { computeBaseline, applyScenario, maxAffordable, principalFromPayment, monthlyFromAnnual, detectIncomeSpike } from './core/afford.js';
 import { narrate } from './core/narrate.js';
-import { deliver, headline, openInBrowser } from './core/deliver.js';
+import { deliver, emailDetails, headline, openInBrowser } from './core/deliver.js';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
@@ -810,6 +810,7 @@ program
       incomeCents: data.summary.incomeCents,
       netCents: data.summary.incomeCents - data.summary.spendingCents,
       startDate: start, endDate: end, reportPath: target,
+      details: emailDetails(data, narration),
       // A connection that stopped answering belongs in the same list as any
       // other problem, so the delivered summary says "2 issues" instead of
       // reporting a clean run over a dead bank link.

@@ -105,9 +105,11 @@ deliver = ["notify", "smtp"]
 
 ### Email
 
-The email has the three figures in the body, with any warnings above them, so the subject line and
-preview are often all you need to read. The full report is attached as one HTML file, which a phone
-opens with a tap — no app, nothing loaded from the network. It is laid out for a phone screen.
+The email body has the three figures with any warnings above them, then the top categories, charges
+worth a look, new merchants, and the AI analysis if it is on, so you often need nothing else. The
+full report is attached as one HTML file, which a phone opens with a tap — no app, nothing loaded
+from the network. It stays an attachment because email clients strip its charts and tabs. Sending
+through Mail.app (`email`) keeps a plain-text body.
 
 **There are two ways to send it.**
 

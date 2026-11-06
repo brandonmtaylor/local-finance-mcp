@@ -27,6 +27,8 @@ export interface SmtpSettings {
 export interface SmtpMessage {
   subject: string;
   body: string;
+  /** Shown instead of `body` by any client that renders HTML, which is most. */
+  html?: string;
   /** Path to the report. Attached with a real filename and content type. */
   attachment?: string;
 }
@@ -86,6 +88,7 @@ export async function sendViaSmtp(
       to: settings.to,
       subject: message.subject,
       text: message.body,
+      html: message.html,
       attachments: message.attachment
         ? [{
           // Real filename and content type — without them a client shows an

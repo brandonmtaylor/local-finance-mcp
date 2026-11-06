@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { copyToFolder, headline, emailBody, deliver } from '../src/core/deliver.js';
+import { copyToFolder, headline, emailBody, emailHtml, deliver } from '../src/core/deliver.js';
 
 const summary = {
   spendingCents: 500_000,
@@ -133,5 +133,78 @@ describe('problems ride along with the figures', () => {
   it('stays out of the way when nothing is wrong', () => {
     expect(emailBody(summary)).not.toContain('BEFORE YOU READ');
     expect(headline(summary)).not.toContain('⚠');
+  });
+});
+
+describe('emailHtml', () => {
+  const details = {
+    categories: [
+      { label: 'Groceries', cents: 120_000 },
+      { label: 'Dining', cents: 30_000 },
+    ],
+    unusual: [{ date: '2026-08-02', description: 'HOME DEPOT #123', cents: 91_000 }],
+    newMerchants: [{ merchant: 'Corner Bakery', cents: 2_500 }],
+  };
+
+  it('shows the figures and the detail worth a glance', () => {
+    const html = emailHtml({ ...summary, details });
+    for (const text of ['$5,000', '$4,900', '-$100', 'Groceries', '$1,200', 'HOME DEPOT #123', 'Corner Bakery']) {
+      expect(html).toContain(text);
+    }
+  });
+
+  it('scales bars against the largest category', () => {
+    const html = emailHtml({ ...summary, details });
+    expect(html).toContain('width="100%" height="6"');
+    expect(html).toContain('width="25%" height="6"');
+  });
+
+  it('uses nothing an email client strips', () => {
+    const html = emailHtml({ ...summary, details });
+    expect(html).not.toMatch(/<svg|<script|<style|<details|<input/i);
+  });
+
+  it('puts problems above the figures, as the plain text does', () => {
+    const html = emailHtml({ ...summary, problems: ['a card stopped reporting'] });
+    expect(html.indexOf('a card stopped reporting')).toBeLessThan(html.indexOf('Spending'));
+  });
+
+  it('escapes everything a bank or a model wrote', () => {
+    const html = emailHtml({
+      ...summary,
+      problems: ['<b>x</b>'],
+      details: {
+        categories: [{ label: '<i>c</i>', cents: 1 }],
+        unusual: [{ date: '2026-08-02', description: '<script>alert(1)</script>', cents: 100 }],
+        newMerchants: [{ merchant: '<img src=x>', cents: 100 }],
+        analysis: { markdown: '<script>bad</script>', producedBy: '<u>cmd</u>' },
+      },
+    });
+    expect(html).not.toMatch(/<script|<img|<b>x|<i>c|<u>cmd/);
+  });
+
+  it('leaves out sections with nothing in them', () => {
+    const html = emailHtml({ ...summary, details: { categories: [], unusual: [], newMerchants: [] } });
+    expect(html).not.toMatch(/Where it went|Worth a look|New merchants|Analysis/);
+  });
+
+  it('says so in both forms when the ledger stops short of the window', () => {
+    const late = { ...summary, details: { ...details, dataEnds: 'nothing after 2026-07-30' } };
+    expect(emailHtml(late)).toContain('nothing after 2026-07-30');
+    expect(emailBody(late)).toContain('nothing after 2026-07-30');
+  });
+
+  it('stays far under the size Gmail clips at', () => {
+    const long = 'x'.repeat(46);
+    const html = emailHtml({
+      ...summary,
+      details: {
+        categories: Array.from({ length: 6 }, (_, i) => ({ label: long, cents: 100 * (i + 1) })),
+        unusual: Array.from({ length: 5 }, () => ({ date: '2026-08-02', description: long, cents: 100 })),
+        newMerchants: Array.from({ length: 5 }, () => ({ merchant: long, cents: 100 })),
+        analysis: { markdown: 'A sentence of analysis.\n'.repeat(100), producedBy: 'claude -p' },
+      },
+    });
+    expect(html.length).toBeLessThan(50_000);
   });
 });
