@@ -8,8 +8,9 @@ right. When you're weighing something big — a car, a move, a remodel — it te
 actually afford, based on how you really spend. And you can ask Claude anything about it in plain
 English.
 
-No budgeting app, no monthly fee, and no company holding your bank login. Your transactions live in
-one file on your own computer, and setup takes about ten minutes.
+No budgeting app in the middle and no monthly fee. Your transactions live in one file on your own
+computer. Try it in about ten minutes with a CSV export from your bank, then link your banks through
+Plaid so it stays up to date by itself.
 
 <p align="center">
   <img src="docs/images/report.png" width="60%" alt="The HTML report: spending, income and net tiles, monthly bars, and running totals">
@@ -42,15 +43,15 @@ one file on your own computer, and setup takes about ten minutes.
 
 ## Who it's for
 
-Anyone who wants those answers from their own data **without a budgeting app holding their bank
-login** or charging a subscription. There is no account to create with us — there is no us. You
-need to be comfortable typing a few commands in a terminal, because there is no app.
+Anyone who wants those answers from their own data **without a budgeting app in the middle** or a
+subscription to pay. There is no account to create with us — there is no us. You need to be
+comfortable typing a few commands in a terminal, because there is no app.
 
 ## How it works
 
-1. **Bring in your accounts.** Download a CSV export from each bank (free, no signup), or link them
-   for automatic daily sync through Plaid **using your own API keys**. No server of ours sits in
-   between.
+1. **Bring in your accounts.** Start with a CSV export from each bank (free, no signup). For
+   everyday use, link them through Plaid **using your own API keys**, so new transactions arrive by
+   themselves. No server of ours sits in between.
 2. **It builds a ledger on your computer.** Every transaction goes into one SQLite file,
    deduplicated and categorized, with card payments and transfers kept out of spending so nothing
    is counted twice.
@@ -72,8 +73,8 @@ flowchart LR
 
 | | |
 |---|---|
-| **About 10 minutes** with CSV exports | Download an export from each bank and `finance setup` reads it. Every feature works this way. |
-| **About 15 more** for automatic sync | Create your own Plaid account and link each bank. [What that involves](docs/plaid.md). |
+| **About 10 minutes** to try it | Download an export from each bank and `finance setup` reads it. Every feature works this way, but the numbers only stay current if you keep downloading exports. |
+| **About 15 more** to keep it current (recommended) | Create your own Plaid account and link each bank, and a daily report stays up to date by itself. Plaid can read the accounts you link, and real banks need its approval. [What that involves](docs/plaid.md). |
 | **You need** | Node 20+ and a terminal. Optionally Claude or another MCP client, to ask questions. |
 
 ```bash
