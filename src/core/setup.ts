@@ -6,7 +6,7 @@
 // answers mean.
 
 import { existsSync, accessSync, constants, statSync, readdirSync, readFileSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { dirname, join, extname } from 'node:path';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { detectColumns, type DetectedColumns } from '../providers/csv/detect.js';
 import { parseAmountCents } from '../providers/csv/parse.js';
@@ -50,10 +50,13 @@ export function preflight(options: {
   try {
     // The first existing ancestor is what matters: the data directory itself
     // may not exist yet, and its parent is what decides whether it can.
+    // `dirname`, not splitting on "/": a Windows path has none, so that walk
+    // trimmed one character at a time and checked whatever it landed on.
     let probe = options.home;
-    while (!existsSync(probe) && probe !== '/' && probe.length > 1) {
-      probe = probe.slice(0, probe.lastIndexOf('/')) || '/';
-    }
+    while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
+    // A file where a folder should be is as fatal as a read-only folder, and
+    // W_OK on a file says nothing about creating a directory inside it.
+    if (!statSync(probe).isDirectory()) throw new Error('not a directory');
     accessSync(probe, constants.W_OK);
     writable = true;
   } catch {

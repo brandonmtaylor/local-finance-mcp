@@ -50,8 +50,12 @@ describe('preflight', () => {
   });
 
   it('reports an unwritable location rather than failing later', () => {
+    // A file in the way fails on every platform; a read-only system folder
+    // such as /proc does not exist on Windows, where the check passed.
+    const blocker = join(dir, 'a-file');
+    writeFileSync(blocker, '');
     const check = preflight({
-      home: '/proc/nope/finance', nodeVersion: 'v20.0.0', hasPlaidBinary: true,
+      home: join(blocker, 'finance'), nodeVersion: 'v20.0.0', hasPlaidBinary: true,
     }).find((c) => c.name === 'Data directory')!;
     expect(check.ok).toBe(false);
     expect(check.fix).toMatch(/FINANCE_HOME/);

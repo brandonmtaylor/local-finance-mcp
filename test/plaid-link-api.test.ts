@@ -256,7 +256,9 @@ describe('the Plaid CLI store', () => {
     expect(listCliItems('production', path).map((i) => i.item_id)).toEqual(['first']);
   });
 
-  it('writes the token store readable only by its owner', () => {
+  // Windows has no POSIX permission bits — Node reports 0o666 whatever the
+  // ACL says — and the profile folder the store lives in is per-user already.
+  it.skipIf(process.platform === 'win32')('writes the token store readable only by its owner', () => {
     addItemToCliConfig('production', { item_id: 'new', access_token: 'at' }, path);
     const mode = statSync(path).mode & 0o777;
     expect(mode & 0o077).toBe(0); // no group or other access

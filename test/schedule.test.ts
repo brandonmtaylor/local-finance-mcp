@@ -9,6 +9,7 @@
 // never runs while every manual invocation works fine.
 
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'node:path';
 import { buildLaunchAgent, buildSystemdUnits, parseTime, jobLabel, taskName } from '../src/core/schedule.js';
 
 const target = {
@@ -113,9 +114,12 @@ describe('one job per data directory', () => {
       expect(label).toMatch(/^com\.finance-mcp\.sync-[0-9a-f]{8}$/);
       const plist = buildLaunchAgent({ hour: 7, minute: 0 }, target);
       expect(plist).toContain(`<string>${label}</string>`);
-      expect(plist).toMatch(/<key>FINANCE_HOME<\/key>\s*<string>\/tmp\/profile-a<\/string>/);
+      // Resolved, so on Windows it is a drive path — the plist and unit are
+      // only generated elsewhere, but the test still runs there.
+      const home = resolve('/tmp/profile-a');
+      expect(plist).toContain(`<key>FINANCE_HOME</key>\n    <string>${home}</string>`);
       expect(buildSystemdUnits({ hour: 7, minute: 0 }, target).service)
-        .toContain('Environment=FINANCE_HOME=/tmp/profile-a');
+        .toContain(`Environment=FINANCE_HOME=${home}`);
     });
     expect(withHome('/tmp/profile-b', jobLabel)).not.toBe(withHome('/tmp/profile-a', jobLabel));
   });

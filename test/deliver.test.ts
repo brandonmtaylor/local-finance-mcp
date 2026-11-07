@@ -53,8 +53,11 @@ describe('copyToFolder', () => {
     // HOME is redirected for the duration — a test must never write into the
     // real home directory, which this one did until it was caught.
     const realHome = process.env.HOME;
+    const realProfile = process.env.USERPROFILE;
     const fakeHome = mkdtempSync(join(tmpdir(), 'home-'));
+    // Windows reads the home directory from USERPROFILE, not HOME.
     process.env.HOME = fakeHome;
+    process.env.USERPROFILE = fakeHome;
     try {
       const out = copyToFolder(withReport().reportPath, '~/Reports');
       expect(out.ok).toBe(true);
@@ -62,6 +65,7 @@ describe('copyToFolder', () => {
       expect(out.detail.startsWith(fakeHome)).toBe(true);
     } finally {
       process.env.HOME = realHome;
+      if (realProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = realProfile;
     }
   });
 
