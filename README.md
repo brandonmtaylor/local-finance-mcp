@@ -76,6 +76,7 @@ flowchart LR
 | **About 10 minutes** to try it | Download an export from each bank and `finance setup` reads it. Every feature works this way, but the numbers only stay current if you keep downloading exports. |
 | **About 15 more** to keep it current (recommended) | Create your own Plaid account and link each bank, and a daily report stays up to date by itself. Plaid can read the accounts you link, and real banks need its approval. [What that involves](docs/plaid.md). |
 | **You need** | Node 20+ and a terminal. Optionally Claude or another MCP client, to ask questions. |
+| **Runs on** | macOS, where it is built and used every day. Linux and Windows pass the same automated tests but have not had a real setup yet, so [reports](https://github.com/brandonmtaylor/local-finance-mcp/issues) are welcome. Desktop notifications and Mail.app are macOS-only; email by SMTP works everywhere. |
 
 ```bash
 npm install -g local-finance-mcp
