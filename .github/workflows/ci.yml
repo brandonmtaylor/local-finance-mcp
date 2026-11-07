@@ -10,12 +10,12 @@ permissions:
 
 jobs:
   test:
-    # better-sqlite3 is a native module — macOS and Linux are where installs
-    # actually break, so both run.
+    # better-sqlite3 is a native module, so installs break per platform, and
+    # Windows is where paths and quoting break. All three run.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 22]
     runs-on: ${{ matrix.os }}
     env:
