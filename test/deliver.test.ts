@@ -61,7 +61,8 @@ describe('copyToFolder', () => {
     try {
       const out = copyToFolder(withReport().reportPath, '~/Reports');
       expect(out.ok).toBe(true);
-      expect(out.detail).not.toContain('~');
+      // Not just "no ~": Windows short names such as RUNNER~1 contain one.
+      expect(out.detail).not.toMatch(/~[\\/]Reports/);
       expect(out.detail.startsWith(fakeHome)).toBe(true);
     } finally {
       process.env.HOME = realHome;
