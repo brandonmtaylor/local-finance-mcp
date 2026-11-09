@@ -13,12 +13,12 @@ computer. Try it in about ten minutes with a CSV export from your bank, then lin
 Plaid so it stays up to date by itself.
 
 <p align="center">
-  <img src="docs/images/report.png" width="60%" alt="The HTML report: spending, income and net tiles, monthly bars, and running totals">
+  <img src="https://raw.githubusercontent.com/brandonmtaylor/local-finance-mcp/main/docs/images/report.png" width="60%" alt="The HTML report: spending, income and net tiles, monthly bars, and running totals">
   &nbsp;
-  <img src="docs/images/report-phone.png" width="27%" alt="The same report on a phone, as it arrives by email">
+  <img src="https://raw.githubusercontent.com/brandonmtaylor/local-finance-mcp/main/docs/images/report-phone.png" width="27%" alt="The same report on a phone, as it arrives by email">
 </p>
 <p align="center">
-  <img src="docs/images/report-drilldown.png" width="50%" alt="Where it went: category bars, with the table expanded to the transactions behind each one">
+  <img src="https://raw.githubusercontent.com/brandonmtaylor/local-finance-mcp/main/docs/images/report-drilldown.png" width="50%" alt="Where it went: category bars, with the table expanded to the transactions behind each one">
 </p>
 <p align="center"><sub>Built from a made-up ledger. Every chart drills down to the transactions behind it.</sub></p>
 
@@ -43,8 +43,8 @@ Plaid so it stays up to date by itself.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/claude-afford-dark.gif">
-    <img src="docs/images/claude-afford-light.gif" width="80%" alt="Claude, connected to the finance MCP server, answers 'Can I afford a $400 purchase this month?' by calling get_balances and get_affordability and replying from the computed figures">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/brandonmtaylor/local-finance-mcp/main/docs/images/claude-afford-dark.gif">
+    <img src="https://raw.githubusercontent.com/brandonmtaylor/local-finance-mcp/main/docs/images/claude-afford-light.gif" width="80%" alt="Claude, connected to the finance MCP server, answers 'Can I afford a $400 purchase this month?' by calling get_balances and get_affordability and replying from the computed figures">
   </picture>
 </p>
 <p align="center"><sub>A real answer from Claude over MCP, against a made-up ledger. <a href="docs/mcp.md">Connect Claude</a>.</sub></p>
