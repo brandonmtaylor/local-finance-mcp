@@ -347,14 +347,16 @@ export function monthlyFromAnnual(annualCents?: number): number {
 }
 
 export function applyScenario(baseline: Baseline, scenario: Scenario): ScenarioResult {
-  let spending = baseline.monthlySpendingCents;
+  // Start from the baseline's net and apply only what the scenario changes.
+  // Rebuilding it as median income minus median spending reintroduced the
+  // difference of medians that `computeBaseline` exists to avoid: when the two
+  // medians come from different months, a scenario that changed nothing
+  // already differed from the baseline, and every scenario carried that error.
+  let spendingChange = scenario.addCents ?? 0;
   if (scenario.replaceLoanCents !== undefined) {
-    spending = spending - baseline.monthlyLoanPaymentCents + scenario.replaceLoanCents;
+    spendingChange += scenario.replaceLoanCents - baseline.monthlyLoanPaymentCents;
   }
-  if (scenario.addCents) spending += scenario.addCents;
-
-  const income = baseline.monthlyIncomeCents + monthlyFromAnnual(scenario.annualIncomeCents);
-  const net = income - spending;
+  const net = baseline.monthlyNetCents - spendingChange + monthlyFromAnnual(scenario.annualIncomeCents);
   return {
     label: scenario.label,
     monthlyNetCents: net,

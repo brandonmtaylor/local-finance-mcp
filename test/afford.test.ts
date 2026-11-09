@@ -161,6 +161,23 @@ describe('applyScenario', () => {
     expect(r.monthlyNetCents).toBe(100_000);   // 400k + 200k freed − 500k new
   });
 
+  it('changes nothing when the scenario changes nothing, whichever months the medians came from', () => {
+    // Months (income, spending) of (4k, 1k), (5k, 6k) and (9k, 3.5k): each
+    // month's own net has median 3k, while median income minus median
+    // spending is 5k − 3.5k = 1.5k. Scenarios rebuilt net the second way, so
+    // an empty one reported a 1.5k drop and "add $400" a 1.9k one.
+    const skewed = {
+      ...baseline,
+      monthlyIncomeCents: 500_000, monthlySpendingCents: 350_000, monthlyNetCents: 300_000,
+      monthlyLoanPaymentCents: 0,
+    };
+    expect(applyScenario(skewed, { label: 'none' })).toMatchObject({ monthlyNetCents: 300_000, changeCents: 0 });
+    expect(applyScenario(skewed, { label: 'car', addCents: 40_000 }))
+      .toMatchObject({ monthlyNetCents: 260_000, changeCents: -40_000 });
+    // And it agrees with the maximum: adding exactly that payment leaves zero.
+    expect(applyScenario(skewed, { label: 'max', addCents: maxAffordable(skewed, 0) }).monthlyNetCents).toBe(0);
+  });
+
   it('handles replacing and adding together', () => {
     const r = applyScenario(baseline, { label: 'both', replaceLoanCents: 500_000, addCents: 50_000 });
     expect(r.monthlyNetCents).toBe(50_000);
