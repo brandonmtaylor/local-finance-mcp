@@ -41,6 +41,14 @@ Plaid so it stays up to date by itself.
 - **And anything else.** Ask Claude in plain English: "what did the move cost us?", "which
   subscriptions went up this year?"
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/claude-afford-dark.gif">
+    <img src="docs/images/claude-afford-light.gif" width="80%" alt="Claude, connected to the finance MCP server, answers 'Can I afford a $400 purchase this month?' by calling get_balances and get_affordability and replying from the computed figures">
+  </picture>
+</p>
+<p align="center"><sub>A real answer from Claude over MCP, against a made-up ledger. <a href="docs/mcp.md">Connect Claude</a>.</sub></p>
+
 ## Who it's for
 
 Anyone who wants those answers from their own data **without a budgeting app in the middle** or a
