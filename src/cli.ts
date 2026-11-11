@@ -602,10 +602,7 @@ program
     if (brief.recurring.length) {
       console.log(`\n  ${bold('Recurring')}`);
       for (const r of brief.recurring.slice(0, 8)) {
-        // A 0-day cadence means several charges land on the same day — a
-        // repeated donation, not a subscription. Say which.
-        const cadence = r.cadenceDays >= 1 ? `~every ${r.cadenceDays}d` : 'same-day repeats';
-        console.log(`    ${r.merchant.slice(0, 30).padEnd(32)} ${money(r.medianCents).padStart(10)} × ${r.occurrences}  ${cadence}`);
+        console.log(`    ${r.merchant.slice(0, 30).padEnd(32)} ${money(r.medianCents).padStart(10)} × ${r.occurrences}  ~every ${r.cadenceDays}d`);
       }
     }
 

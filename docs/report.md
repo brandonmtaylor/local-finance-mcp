@@ -56,7 +56,9 @@ than inventing a suggestion.
 
 The analysis reads **at least 90 days** regardless of the range on display: recurring detection needs
 a charge to appear more than once, and over 30 days a monthly subscription appears exactly once and
-is invisible.
+is invisible. The **Recurring** section follows the same reasoning on its own: whatever the range, it
+looks back 120 days for charges on a regular schedule, then lists the ones still being charged.
+Charges on one day count as one occasion, and a price rise does not hide a subscription.
 
 ### Notes for the analysis
 

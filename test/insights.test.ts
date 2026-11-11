@@ -114,6 +114,49 @@ describe('recurringCharges', () => {
     expect(recurringCharges(db, { start: '2026-01-01', end: '2026-12-31' })).toEqual([]);
   });
 
+  it('sees a monthly bill from a 30-day period, by looking back further', () => {
+    // The real failure: in 30 days a monthly charge appears once, so every
+    // monthly bill was missing from a last-30-days report.
+    monthly('a', '2026-08-12', 1_599); monthly('b', '2026-09-12', 1_599); monthly('c', '2026-10-12', 1_599);
+    const [found] = recurringCharges(db, { start: '2026-10-01', end: '2026-10-31' });
+    // Counted in the period only, since the report labels these "in this window".
+    expect(found).toMatchObject({ occurrences: 1, totalCents: 1_599, lastDate: '2026-10-12' });
+  });
+
+  it('leaves out a charge that stopped before the period', () => {
+    monthly('a', '2026-05-01', 1_599); monthly('b', '2026-06-01', 1_599); monthly('c', '2026-07-01', 1_599);
+    expect(recurringCharges(db, { start: '2026-09-01', end: '2026-09-30' })).toEqual([]);
+  });
+
+  it('keeps a subscription whose price went up, at the new price', () => {
+    const d = (id: string, day: string, cents: number) => monthly(id, day, cents, 'BEAN CLUB');
+    d('a', '2026-08-01', 5_000); d('b', '2026-08-15', 5_000);
+    d('c', '2026-08-29', 9_000); d('d', '2026-09-12', 9_000); d('e', '2026-09-26', 9_500);
+    const [found] = recurringCharges(db, { start: '2026-09-01', end: '2026-09-30' });
+    expect(found).toMatchObject({ medianCents: 9_000, cadenceDays: 14, occurrences: 2 });
+  });
+
+  it('treats charges on one day as one occasion', () => {
+    // Two $10 donations every Sunday: a $20 weekly charge, not a 0-day cadence.
+    for (const [i, day] of ['2026-09-06', '2026-09-13', '2026-09-20', '2026-09-27'].entries()) {
+      monthly(`a${i}`, day, 1_000, 'PARISH GIVING'); monthly(`b${i}`, day, 1_000, 'PARISH GIVING');
+    }
+    const [found] = recurringCharges(db, { start: '2026-09-01', end: '2026-09-30' });
+    expect(found).toMatchObject({ medianCents: 2_000, cadenceDays: 7, occurrences: 4, totalCents: 8_000 });
+  });
+
+  it('does not call similar-priced visits on no schedule recurring', () => {
+    for (const [i, day] of ['2026-09-01', '2026-09-02', '2026-09-22', '2026-09-25', '2026-10-15'].entries()) {
+      monthly(`v${i}`, day, 4_000, 'HOME STORE');
+    }
+    expect(recurringCharges(db, { start: '2026-09-01', end: '2026-10-31' })).toEqual([]);
+  });
+
+  it('does not call a daily habit a subscription', () => {
+    for (let i = 1; i <= 9; i++) monthly(`c${i}`, `2026-09-0${i}`, 550, 'CORNER CAFE');
+    expect(recurringCharges(db, { start: '2026-09-01', end: '2026-09-30' })).toEqual([]);
+  });
+
   it('groups a merchant whose description carries a reference number', () => {
     txn(({ date: '2026-05-01', amountCents: -8_000, description: 'ZELLE TO LAWN SERVICE ON 05/01 REF # BANKREF111' }));
     txn(({ date: '2026-06-01', amountCents: -8_000, description: 'ZELLE TO LAWN SERVICE ON 06/01 REF # BANKREF222' }));

@@ -193,52 +193,91 @@ export function categoryTrends(
 }
 
 /**
- * Charges that repeat: same merchant, similar amount, regular cadence.
+ * How far back recurring detection looks, whatever the period on display.
+ * A monthly charge appears once in a 30-day report, so judged on the period
+ * alone every monthly bill is invisible. 120 days holds three monthly charges
+ * wherever in the month they land.
+ */
+export const RECURRING_LOOKBACK_DAYS = 120;
+
+/**
+ * Charges that repeat: same merchant, similar amount, regular cadence, still
+ * being charged in `period`.
  *
- * Requires 3+ occurrences — two could be coincidence. Amounts must cluster
- * (each within 25% of the median) so a merchant you happen to visit often, at
- * varying prices, is not reported as a subscription.
+ * Judged over RECURRING_LOOKBACK_DAYS, not the period. Charges on one day are
+ * one occasion — two $10 donations every Sunday are a $20 weekly charge, not a
+ * "0-day cadence". Requires 3+ occasions, since two could be coincidence, and:
+ *
+ * - The latest occasions must cluster in amount (each within 25% of their
+ *   median), so a shop visited at varying prices is not a subscription. Only
+ *   the latest are compared, so a price rise does not hide the charge.
+ * - The timing must be regular: gaps of at least MIN_CADENCE_DAYS, most within
+ *   40% of the typical gap. Similar-priced visits to the same store are not a
+ *   schedule.
+ *
+ * `occurrences` and `totalCents` count only occasions inside `period`, to match
+ * how the report labels them; `medianCents` is the current amount.
  */
 export function recurringCharges(
   db: Database.Database, period: Period, minOccurrences = 3,
 ): RecurringCharge[] {
+  const end = Date.parse(`${period.end}T00:00:00Z`);
+  const from = new Date(end - (RECURRING_LOOKBACK_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+  const window = { start: from < period.start ? from : period.start, end: period.end };
   const rows = db.prepare(`
     SELECT t.date, t.description, t.merchant_name AS merchantName, -t.amount_cents AS amountCents
       FROM visible_transactions t
-     WHERE t.date >= @start AND t.date <= @end AND ${spendingClause(db, period)} AND t.amount_cents < 0
-  `).all(period) as Array<{ date: string; description: string; merchantName: string | null; amountCents: number }>;
+     WHERE t.date >= @start AND t.date <= @end AND ${spendingClause(db, window)} AND t.amount_cents < 0
+     ORDER BY t.date
+  `).all(window) as Array<{ date: string; description: string; merchantName: string | null; amountCents: number }>;
 
-  const groups = new Map<string, Array<{ date: string; amountCents: number; label: string }>>();
+  // merchant → date → that day's total. Rows arrive in date order, so each
+  // group's occasions do too, and the last label seen is the current name.
+  const groups = new Map<string, { label: string; days: Map<string, number> }>();
   for (const r of rows) {
     const key = merchantKey(r.description, r.merchantName);
     if (!key) continue;
-    const list = groups.get(key) ?? [];
-    list.push({ date: r.date, amountCents: r.amountCents, label: r.merchantName?.trim() || r.description });
-    groups.set(key, list);
+    const group = groups.get(key) ?? { label: '', days: new Map<string, number>() };
+    group.label = r.merchantName?.trim() || r.description;
+    group.days.set(r.date, (group.days.get(r.date) ?? 0) + r.amountCents);
+    groups.set(key, group);
   }
 
   const out: RecurringCharge[] = [];
-  for (const [, entries] of groups) {
-    if (entries.length < minOccurrences) continue;
-    const amounts = entries.map((e) => e.amountCents);
-    const med = median(amounts);
-    if (med <= 0) continue;
-    // Amounts must cluster, or a frequently-visited shop looks like a subscription.
-    if (!amounts.every((a) => Math.abs(a - med) <= med * 0.25)) continue;
+  for (const { label, days } of groups.values()) {
+    const occasions = [...days].map(([date, cents]) => ({ date, cents }));
+    if (occasions.length < minOccurrences) continue;
+    const last = occasions[occasions.length - 1]!;
+    // Stopped before the period began: a cancelled subscription, not a cost.
+    if (last.date < period.start) continue;
 
-    const dates = entries.map((e) => Date.parse(`${e.date}T00:00:00Z`)).sort((a, b) => a - b);
+    const latest = occasions.slice(-minOccurrences).map((o) => o.cents);
+    const med = median(latest);
+    if (med <= 0) continue;
+    if (!latest.every((a) => Math.abs(a - med) <= med * 0.25)) continue;
+
+    const dates = occasions.map((o) => Date.parse(`${o.date}T00:00:00Z`));
     const gaps = dates.slice(1).map((d, i) => Math.round((d - dates[i]!) / DAY_MS));
+    const cadence = median(gaps);
+    if (cadence < MIN_CADENCE_DAYS) continue;
+    const onSchedule = gaps.filter((g) => Math.abs(g - cadence) <= cadence * 0.4).length;
+    if (onSchedule < Math.ceil((gaps.length * 2) / 3)) continue;
+
+    const inPeriod = occasions.filter((o) => o.date >= period.start);
     out.push({
-      merchant: entries[0]!.label,
-      occurrences: entries.length,
+      merchant: label,
+      occurrences: inPeriod.length,
       medianCents: med,
-      totalCents: amounts.reduce((s, a) => s + a, 0),
-      cadenceDays: median(gaps),
-      lastDate: new Date(dates[dates.length - 1]!).toISOString().slice(0, 10),
+      totalCents: inPeriod.reduce((s, o) => s + o.cents, 0),
+      cadenceDays: cadence,
+      lastDate: last.date,
     });
   }
   return out.sort((a, b) => b.totalCents - a.totalCents);
 }
+
+/** Below this, repeats are a habit (daily coffee), not a billing schedule. */
+const MIN_CADENCE_DAYS = 5;
 
 /**
  * Transactions far above what is typical for their own category.
